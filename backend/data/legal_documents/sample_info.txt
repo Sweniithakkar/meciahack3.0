@@ -1,0 +1,3 @@
+FastAPI Python RAG API System
+This is a Retrieval-Augmented Generation (RAG) backend system.
+It ingests documents from the data directory, converts them into embeddings, and stores them in a ChromaDB vector database for efficient semantic search.
