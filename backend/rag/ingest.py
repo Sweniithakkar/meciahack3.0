@@ -34,11 +34,19 @@ def load_documents(data_dir):
         ext = os.path.splitext(file_path)[1].lower()
         try:
             if ext == ".pdf":
-                import pypdf
-                reader = pypdf.PdfReader(file_path)
-                text = ""
-                for page in reader.pages:
-                    text += (page.extract_text() or "") + "\n"
+                try:
+                    sys.path.insert(0, os.path.join(BACKEND_DIR, "utils"))
+                    from pdf_loader import PDFLoader
+                    loader = PDFLoader()
+                    pdf_data = loader.load_pdf(file_path)
+                    text = pdf_data.get("text", "")
+                except Exception:
+                    import pypdf
+                    reader = pypdf.PdfReader(file_path)
+                    text = ""
+                    for page in reader.pages:
+                        text += (page.extract_text() or "") + "\n"
+
                 if text.strip():
                     docs.append({"source": os.path.basename(file_path), "text": text})
             elif ext in [".txt", ".md", ".json", ".csv", ".py", ".html"]:

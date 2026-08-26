@@ -15,7 +15,9 @@ import ollama
 
 DEFAULT_MODEL = "llama3.2:3b"
 
+
 def get_available_model():
+    """Returns available Ollama model for chat generation."""
     try:
         response = ollama.list()
         models = []
@@ -24,21 +26,26 @@ def get_available_model():
         elif isinstance(response, dict):
             models = [m.get("name") or m.get("model") for m in response.get("models", [])]
         
+        # Prefer llama3.2, llama, gemma models that support chat
         for m in models:
-            if m and "llama3.2" in m:
+            if m and ("llama" in m.lower() or "gemma" in m.lower()) and "embedding" not in m.lower():
                 return m
-        if models and models[0]:
-            return models[0]
+        if models:
+            for m in models:
+                if m and "embedding" not in m.lower():
+                    return m
     except Exception as e:
         print(f"[!] Warning checking Ollama models: {e}")
     return DEFAULT_MODEL
 
+
 def generate_answer(question, context):
+    """Generates an answer to the user's question using retrieved document context."""
     model_name = get_available_model()
     prompt = f"""
-You are Legal Lence, an AI legal document explainer.
+You are Legal Lence, an AI legal document analyst and explainer.
 
-Use the provided legal context to answer the user's question.
+Use the provided legal document context to answer the user's question accurately and clearly.
 
 LEGAL CONTEXT:
 {context}
@@ -47,30 +54,54 @@ USER QUESTION:
 {question}
 
 Instructions:
-- Explain in simple language.
-- Use only the provided context.
-- Do not invent laws, sections, cases, or facts.
-- If the context is insufficient, clearly say so.
-- Mention the source when available.
+- Explain in simple, professional language.
+- Base your response on the provided context.
+- Highlight key terms, figures, obligations, or provisions where relevant.
+- Mention document source details if available.
 
 Answer:
 """
+    try:
+        response = ollama.chat(
+            model=model_name,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response["message"]["content"]
+    except Exception as e:
+        return f"Error generating answer with model {model_name}: {e}"
 
-    response = ollama.chat(
-        model=model_name,
-        messages=[
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ]
-    )
 
-    return response["message"]["content"]
+def generate_checklist(context):
+    """Generates a 'BEFORE YOU SIGN' checklist based on legal document context."""
+    model_name = get_available_model()
+    prompt = f"""
+You are Legal Lence, an AI legal document risk advisor.
+
+Based on the provided legal document context, generate a practical "BEFORE YOU SIGN" checklist.
+
+LEGAL CONTEXT:
+{context}
+
+Instructions:
+- List 3 to 5 critical clauses, key obligations, payment/financial terms, probation/notice periods, or potential risks the user must verify before signing.
+- Format as clean, clear bullet points.
+- Keep language direct, actionable, and easy to understand.
+
+Checklist:
+"""
+    try:
+        response = ollama.chat(
+            model=model_name,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response["message"]["content"]
+    except Exception as e:
+        return f"Error generating checklist with model {model_name}: {e}"
+
 
 def main():
     try:
-        from retrive import retrieve_documents
+        from retrieve import retrieve_documents
     except ImportError:
         retrieve_documents = None
 
@@ -80,10 +111,10 @@ def main():
         try:
             question = input("\nEnter your legal question: ")
         except (EOFError, KeyboardInterrupt):
-            question = "Give me information about the legal document"
+            question = "What are the main terms in the document?"
 
     if not question.strip():
-        question = "Give me information about the legal document"
+        question = "What are the main terms in the document?"
 
     print(f"\n[Legal Lence] Searching knowledge base for: '{question}'...")
     
@@ -102,11 +133,16 @@ def main():
     if not context:
         context = "No specific document context found in database."
 
-    print(f"\n[Legal Lence] Generating response using model...\n")
+    print(f"\n[Legal Lence] Generating answer & checklist using model...\n")
     answer = generate_answer(question, context)
+    checklist = generate_checklist(context)
+    
     print("========== LEGAL LENCE ANSWER ==========\n")
     print(answer)
+    print("\n========== BEFORE YOU SIGN ==========\n")
+    print(checklist)
     print("\n========================================\n")
+
 
 if __name__ == "__main__":
     main()
