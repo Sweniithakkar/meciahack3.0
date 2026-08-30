@@ -6,9 +6,16 @@ import { SAMPLE_DOCUMENTS } from '../data/mockData';
  * ============================================================================
  */
 
+const envApiUrl = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL;
+const defaultApiUrl = import.meta.env.PROD 
+  ? 'https://legal-lens-backend.onrender.com/api' 
+  : 'http://localhost:5000/api';
+const rawApiUrl = envApiUrl || defaultApiUrl;
+const normalizedApiUrl = rawApiUrl.endsWith('/api') ? rawApiUrl : `${rawApiUrl.replace(/\/$/, '')}/api`;
+
 export const RAG_CONFIG = {
   USE_REAL_BACKEND: true,
-  API_BASE_URL: import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? 'https://legal-lens-backend.onrender.com/api' : 'http://localhost:5000/api'),
+  API_BASE_URL: normalizedApiUrl,
 };
 
 class LegalLensAPIService {

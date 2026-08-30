@@ -1,0 +1,40 @@
+# Environment & Secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+
+# Python / Virtual Environment
+venv/
+env/
+ENV/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Databases & Uploaded Files
+*.db
+backend/data/legal_lens.db
+backend/data/uploads/*
+!backend/data/uploads/.gitkeep
+chroma_db/
+backend/rag/chroma_db/
+backend/vector_db/chroma_db/
+
+# Node / Frontend
+node_modules/
+frontend/node_modules/
+.npm
+.vite/
+
+# Temp & IDE
+scratch/
+.gemini/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

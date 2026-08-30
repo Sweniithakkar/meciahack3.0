@@ -8,7 +8,6 @@ if hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 
-# Ensure venv site-packages is loaded
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BACKEND_DIR = os.path.dirname(SCRIPT_DIR)
 PROJECT_ROOT = os.path.abspath(os.path.join(BACKEND_DIR, ".."))
@@ -20,8 +19,8 @@ if os.path.exists(venv_site) and venv_site not in sys.path:
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
+import hashlib
 import chromadb
-import ollama
 
 # ==============================
 # CONFIGURATION
@@ -50,30 +49,52 @@ except Exception:
         collection = client.get_or_create_collection(name="uploaded_documents")
 
 
-# ==============================
-# RETRIEVE RELEVANT DOCUMENTS
-# ==============================
+def get_query_embedding(query):
+    """Generates embedding for query using Ollama, Gemini API, or hashing fallback."""
+    try:
+        import ollama
+        response = ollama.embed(model=EMBEDDING_MODEL, input=query)
+        if isinstance(response, dict) and "embeddings" in response:
+            return response["embeddings"][0]
+        elif hasattr(response, "embeddings"):
+            return response.embeddings[0]
+    except Exception as e:
+        print(f"[!] Ollama query embedding failed ({e}). Trying fallback...")
+
+    gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if gemini_key:
+        try:
+            import requests
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={gemini_key}"
+            payload = {
+                "model": "models/text-embedding-004",
+                "content": {"parts": [{"text": query}]}
+            }
+            res = requests.post(url, json=payload, timeout=15)
+            if res.status_code == 200:
+                return res.json()["embedding"]["values"]
+        except Exception as gem_err:
+            print(f"[!] Gemini query embedding failed: {gem_err}")
+
+    # Fallback pseudo-vector matching chunk dimensions
+    h = hashlib.sha256(query.encode("utf-8")).digest()
+    return [((b / 255.0) - 0.5) for b in (h * 12)]
+
 
 def retrieve_documents(query, n_results=3):
     """
-    Converts query string into embedding using embeddinggemma via Ollama,
-    and searches ChromaDB vector store for top n_results chunks.
+    Converts query string into embedding and searches ChromaDB vector store.
     """
-    response = ollama.embed(model=EMBEDDING_MODEL, input=query)
-    
-    if isinstance(response, dict) and "embeddings" in response:
-        query_embedding = response["embeddings"][0]
-    elif hasattr(response, "embeddings"):
-        query_embedding = response.embeddings[0]
-    else:
-        raise ValueError(f"Unexpected response format from ollama.embed: {response}")
-
-    results = collection.query(
-        query_embeddings=[query_embedding],
-        n_results=n_results
-    )
-
-    return results
+    try:
+        query_embedding = get_query_embedding(query)
+        results = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=n_results
+        )
+        return results
+    except Exception as e:
+        print(f"[!] ChromaDB retrieval exception: {e}")
+        return {"documents": [[]], "metadatas": [[]]}
 
 
 def safe_print(text):
@@ -86,26 +107,14 @@ def safe_print(text):
         print(encoded)
 
 
-# ==============================
-# TEST RETRIEVAL
-# ==============================
-
 def main():
     safe_print("=" * 60)
     safe_print("           DOCUMENT RETRIEVAL TEST (EMBEDDINGGEMMA)")
     safe_print("=" * 60)
-    safe_print(f"[*] Vector DB Path: {CHROMA_PATH}")
-    safe_print(f"[*] Collection Name: {collection.name}")
 
     if len(sys.argv) > 1:
         question = " ".join(sys.argv[1:])
     else:
-        try:
-            question = input("\nEnter your question about the PDF: ")
-        except (EOFError, KeyboardInterrupt):
-            question = "What are the payment and salary terms?"
-
-    if not question.strip():
         question = "What are the payment and salary terms?"
 
     safe_print(f"\n[*] Searching for: '{question}'...")

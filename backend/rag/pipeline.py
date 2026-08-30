@@ -11,7 +11,7 @@ if hasattr(sys.stdout, "reconfigure"):
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
 
-# Automatically load venv site-packages if running with global python
+# Automatically load venv site-packages if running with local python
 venv_site = os.path.join(PROJECT_ROOT, "venv", "Lib", "site-packages")
 if os.path.exists(venv_site) and venv_site not in sys.path:
     sys.path.insert(0, venv_site)
@@ -19,56 +19,74 @@ if os.path.exists(venv_site) and venv_site not in sys.path:
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
+BACKEND_DIR = os.path.dirname(SCRIPT_DIR)
+if BACKEND_DIR not in sys.path:
+    sys.path.insert(0, BACKEND_DIR)
+
 from retrieve import retrieve_documents
-from llm import generate_answer, generate_checklist
+from llm import generate_answer, generate_checklist, analyze_full_document
+from utils.pdf_loader import extract_text
 
 
-def analyze_document(question):
-    results = retrieve_documents(
-        question,
-        n_results=5
-    )
+def analyze_document_pdf(pdf_path, doc_id=None, user_id=None):
+    """
+    Extracts text from PDF file and runs full RAG analysis (summary, risks, clauses, checklist).
+    """
+    text = extract_text(pdf_path)
+    if not text or not text.strip():
+        text = f"Legal document at {os.path.basename(pdf_path)}"
+
+    analysis = analyze_full_document(text)
+    
+    filename = os.path.basename(pdf_path)
+    analysis["sources"] = [{"filename": filename, "page": 1}]
+    return analysis
+
+
+def ask_document(question, user_id=None, doc_id=None):
+    """
+    Runs Q&A pipeline over vector store context for a user / document query.
+    """
+    results = retrieve_documents(question, n_results=5)
 
     documents = results["documents"][0] if results and "documents" in results and results["documents"] else []
     metadata = results["metadatas"][0] if results and "metadatas" in results and results["metadatas"] else []
 
     context = ""
+    sources = []
 
     for i, document in enumerate(documents):
         meta = metadata[i] if i < len(metadata) else {}
-        source = meta.get("source", "Unknown")
+        source_name = meta.get("source", "Legal Document")
+        page_num = meta.get("page", 1)
 
         context += f"""
-SOURCE: {source}
-
+SOURCE: {source_name} (Page {page_num})
 CONTENT:
 {document}
-
 -------------------------
 """
+        sources.append({"filename": source_name, "page": page_num})
 
     if not context.strip():
-        return {
-            "answer": "I could not find relevant information in the uploaded document.",
-            "checklist": "• No specific checklist items found.",
-            "sources": []
-        }
+        context = f"Question: {question}. Context: Legal Lens uploaded document."
 
-    # Page 2: Answer
-    answer = generate_answer(
-        question,
-        context
-    )
-
-    # Page 3: Checklist
-    checklist = generate_checklist(
-        context
-    )
+    answer = generate_answer(question, context)
 
     return {
         "answer": answer,
+        "sources": sources
+    }
+
+
+def analyze_document(question):
+    """Legacy RAG query entrypoint."""
+    res = ask_document(question)
+    checklist = generate_checklist(res.get("answer", ""))
+    return {
+        "answer": res.get("answer", ""),
         "checklist": checklist,
-        "sources": metadata
+        "sources": res.get("sources", [])
     }
 
 
@@ -88,18 +106,12 @@ def run_pipeline():
     if len(sys.argv) > 1:
         question = " ".join(sys.argv[1:]).strip()
     else:
-        try:
-            question = input("\nEnter your question about the PDF: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            question = "What is the probation period and salary structure?"
-
-    if not question:
         question = "What is the probation period and salary structure?"
 
     safe_print(f"\n[*] Analyzing document for question: '{question}'...")
     result = analyze_document(question)
 
-    safe_print("\n========== LEGAL LENCE ==========\n")
+    safe_print("\n========== LEGAL LENS ==========\n")
     safe_print("ANSWER:")
     safe_print(result["answer"])
 

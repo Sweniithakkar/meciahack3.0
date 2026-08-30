@@ -3,11 +3,14 @@ import sys
 import uuid
 import json
 import hashlib
+import time
 from datetime import datetime
 
-# Ensure backend directory and venv site-packages are in sys.path
+# Ensure backend directory is in sys.path
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
+
+# Optionally load local venv site-packages if present (Windows dev)
 venv_site = os.path.join(PROJECT_ROOT, "venv", "Lib", "site-packages")
 if os.path.exists(venv_site) and venv_site not in sys.path:
     sys.path.insert(0, venv_site)
@@ -40,7 +43,7 @@ CORS(app, resources={r"/*": {"origins": allowed_origins}})
 UPLOAD_FOLDER = os.path.join(SCRIPT_DIR, "data", "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Ensure database tables are created
+# Ensure database tables are created on app start
 init_db()
 
 
@@ -85,8 +88,6 @@ def register():
             return jsonify({"error": "Password must be at least 6 characters long"}), 400
 
         existing_user = get_user_by_email(email)
-        if not existing_user:
-            existing_user = get_user_by_email(email)
         if existing_user:
             return jsonify({"error": "An account with this email already exists"}), 400
 
@@ -234,8 +235,6 @@ def delete_document(doc_id):
 # PROTECTED ANALYZE PDF
 # ==========================================
 
-import time
-
 @app.route("/api/analyze", methods=["POST"])
 @login_required
 def analyze_pdf():
@@ -261,7 +260,7 @@ def analyze_pdf():
         doc_hash = hashlib.sha256(file_bytes).hexdigest()
         file_size_str = f"{(len(file_bytes) / (1024 * 1024)):.1f} MB" if len(file_bytes) > 1024 * 1024 else f"{(len(file_bytes) / 1024):.1f} KB"
 
-        # Check if user already uploaded this document (hash deduplication)
+        # Check hash deduplication
         existing_doc = get_document_by_hash(user_id, doc_hash)
         if existing_doc:
             elapsed = int((time.time() - t_start) * 1000)
@@ -282,18 +281,18 @@ def analyze_pdf():
                 "cached": True
             })
 
-        # Generate new unique document ID
+        # Unique document ID
         doc_id = f"doc_{uuid.uuid4().hex[:12]}"
         unique_name = f"{user_id}_{doc_id}_{file.filename}"
         pdf_path = os.path.join(UPLOAD_FOLDER, unique_name)
 
-        # Save PDF to disk
+        # Save PDF
         with open(pdf_path, "wb") as f:
             f.write(file_bytes)
 
         print(f"\n📄 PDF received for User {user_id}: {file.filename}")
 
-        # Extract text & process chunks into ChromaDB
+        # Extract text & process chunks
         text = extract_text(pdf_path)
 
         if not text:
@@ -309,9 +308,9 @@ def analyze_pdf():
             pre_extracted_text=text
         )
 
-        print(f"✅ PDF stored in ChromaDB (user {user_id}, doc {doc_id})")
+        print(f"✅ PDF stored in Vector DB (user {user_id}, doc {doc_id})")
 
-        # Run RAG Document Analysis
+        # Run RAG Analysis
         t_llm_start = time.time()
         analysis_result = analyze_document_pdf(
             pdf_path,
@@ -319,7 +318,7 @@ def analyze_pdf():
             user_id=user_id
         )
         t_llm_end = time.time()
-        print(f"[PERF] Ollama Document Analysis time: {int((t_llm_end - t_llm_start)*1000)} ms")
+        print(f"[PERF] RAG Document Analysis time: {int((t_llm_end - t_llm_start)*1000)} ms")
 
         summary_text = analysis_result.get("summary", "")
         risks_data = analysis_result.get("risks", [])
@@ -330,7 +329,7 @@ def analyze_pdf():
         display_name = file.filename.replace(".pdf", "").replace(".PDF", "").replace("_", " ").title()
         upload_date_str = datetime.now().strftime("%b %d, %Y")
 
-        # Store document record in SQLite DB
+        # Store in SQLite
         db_doc = create_document(
             doc_id=doc_id,
             user_id=user_id,
@@ -367,7 +366,7 @@ def analyze_pdf():
 
     except Exception as e:
         print("❌ ERROR in /api/analyze:", str(e))
-        return jsonify({"error": "Something went wrong while analyzing the document."}), 500
+        return jsonify({"error": f"Something went wrong while analyzing the document: {str(e)}"}), 500
 
 
 # ==========================================
@@ -421,14 +420,15 @@ def ask_question():
 # ==========================================
 
 if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
     print("\n===================================")
-    print("     LEGAL LENCE BACKEND (AUTH)")
+    print("     LEGAL LENS BACKEND (AUTH)")
     print("===================================")
-    print("Server: http://localhost:5000")
+    print(f"Server starting on 0.0.0.0:{port}")
     print("===================================\n")
 
     app.run(
         host="0.0.0.0",
-        port=5000,
-        debug=True
+        port=port,
+        debug=False
     )
