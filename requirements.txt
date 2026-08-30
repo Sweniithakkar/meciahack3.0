@@ -1,0 +1,9 @@
+Flask
+flask-cors
+PyJWT
+pypdf
+python-dotenv
+Werkzeug
+chromadb
+ollama
+gunicorn
