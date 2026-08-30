@@ -1,15 +1,9 @@
 Flask
 flask-cors
 PyJWT
-passlib
 pypdf
 python-dotenv
-python-multipart
 Werkzeug
 chromadb
 ollama
-pandas
-SQLAlchemy
-sqlmodel
-requests
-slowapi
+gunicorn
