@@ -7,7 +7,7 @@ import { SAMPLE_DOCUMENTS } from '../data/mockData';
  */
 
 const envApiUrl = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL;
-const defaultApiUrl = '/api';
+const defaultApiUrl = import.meta.env.DEV ? 'http://localhost:5000/api' : '/api';
 const rawApiUrl = envApiUrl || defaultApiUrl;
 const normalizedApiUrl = rawApiUrl.endsWith('/api') ? rawApiUrl : `${rawApiUrl.replace(/\/$/, '')}/api`;
 
