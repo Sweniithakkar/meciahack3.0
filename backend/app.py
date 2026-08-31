@@ -40,7 +40,12 @@ frontend_url = os.environ.get("FRONTEND_URL", "").strip()
 allowed_origins = [origin.strip() for origin in frontend_url.split(",") if origin.strip()] if frontend_url else "*"
 CORS(app, resources={r"/*": {"origins": allowed_origins}})
 
-UPLOAD_FOLDER = os.path.join(SCRIPT_DIR, "data", "uploads")
+# Use /tmp directory on Vercel serverless functions
+if os.environ.get("VERCEL") or not os.access(SCRIPT_DIR, os.W_OK):
+    UPLOAD_FOLDER = os.path.join("/tmp", "uploads")
+else:
+    UPLOAD_FOLDER = os.path.join(SCRIPT_DIR, "data", "uploads")
+
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 # Ensure database tables are created on app start

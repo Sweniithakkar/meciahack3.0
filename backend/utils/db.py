@@ -3,9 +3,14 @@ import sqlite3
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BACKEND_DIR = os.path.dirname(SCRIPT_DIR)
-DATA_DIR = os.path.join(BACKEND_DIR, "data")
-os.makedirs(DATA_DIR, exist_ok=True)
 
+# Use /tmp directory on Vercel serverless functions (read-only root filesystem)
+if os.environ.get("VERCEL") or not os.access(BACKEND_DIR, os.W_OK):
+    DATA_DIR = "/tmp"
+else:
+    DATA_DIR = os.path.join(BACKEND_DIR, "data")
+
+os.makedirs(DATA_DIR, exist_ok=True)
 DB_PATH = os.path.join(DATA_DIR, "legal_lens.db")
 
 def get_db():

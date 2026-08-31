@@ -7,9 +7,7 @@ import { SAMPLE_DOCUMENTS } from '../data/mockData';
  */
 
 const envApiUrl = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL;
-const defaultApiUrl = import.meta.env.PROD 
-  ? 'https://legal-lens-backend.onrender.com/api' 
-  : 'http://localhost:5000/api';
+const defaultApiUrl = '/api';
 const rawApiUrl = envApiUrl || defaultApiUrl;
 const normalizedApiUrl = rawApiUrl.endsWith('/api') ? rawApiUrl : `${rawApiUrl.replace(/\/$/, '')}/api`;
 

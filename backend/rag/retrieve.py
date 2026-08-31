@@ -26,11 +26,14 @@ import chromadb
 # CONFIGURATION
 # ==============================
 
-CHROMA_PATH = os.path.join(BACKEND_DIR, "vector_db", "chroma_db")
-if not os.path.exists(CHROMA_PATH):
-    alt_path = os.path.join(SCRIPT_DIR, "chroma_db")
-    if os.path.exists(alt_path):
-        CHROMA_PATH = alt_path
+if os.environ.get("VERCEL") or not os.access(BACKEND_DIR, os.W_OK):
+    CHROMA_PATH = os.path.join("/tmp", "vector_db", "chroma_db")
+else:
+    CHROMA_PATH = os.path.join(BACKEND_DIR, "vector_db", "chroma_db")
+    if not os.path.exists(CHROMA_PATH):
+        alt_path = os.path.join(SCRIPT_DIR, "chroma_db")
+        if os.path.exists(alt_path):
+            CHROMA_PATH = alt_path
 
 EMBEDDING_MODEL = "embeddinggemma"
 

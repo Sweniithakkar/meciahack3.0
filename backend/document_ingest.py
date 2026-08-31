@@ -27,9 +27,13 @@ from utils.chunker import create_chunks
 # CONFIGURATION
 # ==============================
 
-CHROMA_PATH = os.path.join(SCRIPT_DIR, "vector_db", "chroma_db")
-EMBEDDING_MODEL = "embeddinggemma"
-PDF_FOLDER = os.path.join(SCRIPT_DIR, "data", "legal_documents")
+# Use /tmp directory on Vercel serverless functions
+if os.environ.get("VERCEL") or not os.access(SCRIPT_DIR, os.W_OK):
+    CHROMA_PATH = os.path.join("/tmp", "vector_db", "chroma_db")
+    PDF_FOLDER = os.path.join("/tmp", "legal_documents")
+else:
+    CHROMA_PATH = os.path.join(SCRIPT_DIR, "vector_db", "chroma_db")
+    PDF_FOLDER = os.path.join(SCRIPT_DIR, "data", "legal_documents")
 
 os.makedirs(os.path.dirname(CHROMA_PATH), exist_ok=True)
 os.makedirs(PDF_FOLDER, exist_ok=True)
