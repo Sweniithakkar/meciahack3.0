@@ -26,6 +26,8 @@ import chromadb
 # CONFIGURATION
 # ==============================
 
+EMBEDDING_MODEL = "embeddinggemma"
+
 if os.environ.get("VERCEL") or not os.access(BACKEND_DIR, os.W_OK):
     CHROMA_PATH = os.path.join("/tmp", "vector_db", "chroma_db")
 else:
@@ -34,8 +36,6 @@ else:
         alt_path = os.path.join(SCRIPT_DIR, "chroma_db")
         if os.path.exists(alt_path):
             CHROMA_PATH = alt_path
-
-EMBEDDING_MODEL = "embeddinggemma"
 
 # ==============================
 # CONNECT TO CHROMADB
@@ -53,17 +53,7 @@ except Exception:
 
 
 def get_query_embedding(query):
-    """Generates embedding for query using Ollama, Gemini API, or hashing fallback."""
-    try:
-        import ollama
-        response = ollama.embed(model=EMBEDDING_MODEL, input=query)
-        if isinstance(response, dict) and "embeddings" in response:
-            return response["embeddings"][0]
-        elif hasattr(response, "embeddings"):
-            return response.embeddings[0]
-    except Exception as e:
-        print(f"[!] Ollama query embedding failed ({e}). Trying fallback...")
-
+    """Generates 768-dim embedding for query using Gemini API, Ollama, or hashing fallback."""
     gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
     if gemini_key:
         try:
@@ -75,13 +65,26 @@ def get_query_embedding(query):
             }
             res = requests.post(url, json=payload, timeout=15)
             if res.status_code == 200:
-                return res.json()["embedding"]["values"]
+                vals = res.json()["embedding"]["values"]
+                if len(vals) < 768:
+                    vals = vals + [0.0] * (768 - len(vals))
+                return vals[:768]
         except Exception as gem_err:
             print(f"[!] Gemini query embedding failed: {gem_err}")
 
-    # Fallback pseudo-vector matching chunk dimensions
+    try:
+        import ollama
+        response = ollama.embed(model=EMBEDDING_MODEL, input=query)
+        if isinstance(response, dict) and "embeddings" in response:
+            return response["embeddings"][0]
+        elif hasattr(response, "embeddings"):
+            return response.embeddings[0]
+    except Exception as e:
+        print(f"[!] Ollama query embedding failed ({e}). Using 768-dim fallback...")
+
+    # Fallback pseudo-vector matching 768 chunk dimensions
     h = hashlib.sha256(query.encode("utf-8")).digest()
-    return [((b / 255.0) - 0.5) for b in (h * 12)]
+    return [((b / 255.0) - 0.5) for b in (h * 24)]
 
 
 def retrieve_documents(query, n_results=3):
@@ -112,7 +115,7 @@ def safe_print(text):
 
 def main():
     safe_print("=" * 60)
-    safe_print("           DOCUMENT RETRIEVAL TEST (EMBEDDINGGEMMA)")
+    safe_print("           DOCUMENT RETRIEVAL TEST")
     safe_print("=" * 60)
 
     if len(sys.argv) > 1:

@@ -1,5 +1,6 @@
 import os
 import sys
+import hashlib
 
 # Ensure UTF-8 output on Windows terminals
 if hasattr(sys.stdout, "reconfigure"):
@@ -18,7 +19,6 @@ if os.path.exists(venv_site) and venv_site not in sys.path:
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
-import hashlib
 import chromadb
 from utils.pdf_loader import extract_text
 from utils.chunker import create_chunks
@@ -27,7 +27,8 @@ from utils.chunker import create_chunks
 # CONFIGURATION
 # ==============================
 
-# Use /tmp directory on Vercel serverless functions
+EMBEDDING_MODEL = "embeddinggemma"
+
 if os.environ.get("VERCEL") or not os.access(SCRIPT_DIR, os.W_OK):
     CHROMA_PATH = os.path.join("/tmp", "vector_db", "chroma_db")
     PDF_FOLDER = os.path.join("/tmp", "legal_documents")
@@ -52,19 +53,9 @@ collection = client.get_or_create_collection(name="uploaded_documents")
 
 def create_embedding(text):
     """
-    Creates text embedding vector.
-    Tries Ollama embeddinggemma first; falls back to Gemini API or deterministic vector.
+    Creates text embedding vector (768 dimensions).
+    Tries Ollama embeddinggemma first; falls back to Gemini API or 768-dim hash vector.
     """
-    try:
-        import ollama
-        response = ollama.embed(model=EMBEDDING_MODEL, input=text)
-        if isinstance(response, dict) and "embeddings" in response:
-            return response["embeddings"][0]
-        elif hasattr(response, "embeddings"):
-            return response.embeddings[0]
-    except Exception as e:
-        print(f"[!] Ollama embedding failed ({e}). Trying fallback...")
-
     gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
     if gemini_key:
         try:
@@ -76,13 +67,27 @@ def create_embedding(text):
             }
             res = requests.post(url, json=payload, timeout=15)
             if res.status_code == 200:
-                return res.json()["embedding"]["values"]
+                vals = res.json()["embedding"]["values"]
+                # Pad/truncate to 768 if needed
+                if len(vals) < 768:
+                    vals = vals + [0.0] * (768 - len(vals))
+                return vals[:768]
         except Exception as gem_err:
             print(f"[!] Gemini embedding failed: {gem_err}")
 
-    # Fallback pseudo-vector for lightweight cloud execution
+    try:
+        import ollama
+        response = ollama.embed(model=EMBEDDING_MODEL, input=text)
+        if isinstance(response, dict) and "embeddings" in response:
+            return response["embeddings"][0]
+        elif hasattr(response, "embeddings"):
+            return response.embeddings[0]
+    except Exception as e:
+        print(f"[!] Ollama embedding failed ({e}). Using 768-dim vector fallback...")
+
+    # Deterministic 768-dim vector fallback (32 bytes * 24 = 768 float values)
     h = hashlib.sha256(text.encode("utf-8")).digest()
-    vec = [((b / 255.0) - 0.5) for b in (h * 12)]
+    vec = [((b / 255.0) - 0.5) for b in (h * 24)]
     return vec
 
 
@@ -136,7 +141,7 @@ def process_pdf(pdf_path, user_id=None, doc_id=None, doc_hash=None, pre_extracte
 
 def main():
     print("=" * 60)
-    print("           DOCUMENT INGESTION PIPELINE (EMBEDDINGGEMMA)")
+    print("           DOCUMENT INGESTION PIPELINE")
     print("=" * 60)
 
     if not os.path.exists(PDF_FOLDER):
