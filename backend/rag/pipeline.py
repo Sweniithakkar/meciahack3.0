@@ -28,24 +28,25 @@ from llm import generate_answer, generate_checklist, analyze_full_document
 from utils.pdf_loader import extract_text
 
 
-def analyze_document_pdf(pdf_path, doc_id=None, user_id=None):
+def analyze_document_pdf(pdf_path, doc_id=None, user_id=None, language="en"):
     """
-    Extracts text from PDF file and runs full RAG analysis (summary, risks, clauses, checklist).
+    Extracts text from PDF file and runs full RAG analysis (summary, risks, clauses, checklist) in target language.
     """
     text = extract_text(pdf_path)
     if not text or not text.strip():
         text = f"Legal document at {os.path.basename(pdf_path)}"
 
-    analysis = analyze_full_document(text)
+    analysis = analyze_full_document(text, language=language)
     
     filename = os.path.basename(pdf_path)
     analysis["sources"] = [{"filename": filename, "page": 1}]
+    analysis["language"] = language
     return analysis
 
 
-def ask_document(question, user_id=None, doc_id=None):
+def ask_document(question, user_id=None, doc_id=None, language="en"):
     """
-    Runs Q&A pipeline over vector store context for a user / document query.
+    Runs Q&A pipeline over vector store context for a user / document query in target language.
     """
     results = retrieve_documents(question, n_results=5)
 
@@ -71,22 +72,24 @@ CONTENT:
     if not context.strip():
         context = f"Question: {question}. Context: Legal Lens uploaded document."
 
-    answer = generate_answer(question, context)
+    answer = generate_answer(question, context, language=language)
 
     return {
         "answer": answer,
-        "sources": sources
+        "sources": sources,
+        "language": language
     }
 
 
-def analyze_document(question):
+def analyze_document(question, language="en"):
     """Legacy RAG query entrypoint."""
-    res = ask_document(question)
-    checklist = generate_checklist(res.get("answer", ""))
+    res = ask_document(question, language=language)
+    checklist = generate_checklist(res.get("answer", ""), language=language)
     return {
         "answer": res.get("answer", ""),
         "checklist": checklist,
-        "sources": res.get("sources", [])
+        "sources": res.get("sources", []),
+        "language": language
     }
 
 

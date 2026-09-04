@@ -131,10 +131,46 @@ def call_cloud_llm_api(prompt, system_instruction=""):
     return None
 
 
-def generate_answer(question, context):
-    """Generates an answer to the user's question using retrieved document context."""
+LANGUAGE_NAMES = {
+    "en": "English",
+    "hi": "Hindi (हिंदी)",
+    "gu": "Gujarati (ગુજરાતી)"
+}
+
+
+def get_language_prompt_instruction(language="en"):
+    lang = (language or "en").lower()
+    if lang == "hi":
+        return (
+            "LANGUAGE INSTRUCTION:\n"
+            "You MUST respond ONLY in Hindi (हिंदी).\n"
+            "CRITICAL: Do NOT translate or modify page numbers, section numbers, clause numbers, or document filenames.\n"
+            "Use exact citations, e.g., 'स्रोत: पेज X — सेक्शन Y'."
+        )
+    elif lang == "gu":
+        return (
+            "LANGUAGE INSTRUCTION:\n"
+            "You MUST respond ONLY in Gujarati (ગુજરાતી).\n"
+            "CRITICAL: Do NOT translate or modify page numbers, section numbers, clause numbers, or document filenames.\n"
+            "Use exact citations, e.g., 'સ્ત્રોત: પેજ X — વિભાગ Y'."
+        )
+    else:
+        return (
+            "LANGUAGE INSTRUCTION:\n"
+            "Respond in English.\n"
+            "CRITICAL: Do NOT translate or modify page numbers, section numbers, clause numbers, or document filenames.\n"
+            "Use exact citations, e.g., 'Source: Page X — Section Y'."
+        )
+
+
+def generate_answer(question, context, language="en"):
+    """Generates an answer to the user's question using retrieved document context in the specified language."""
+    lang_instruction = get_language_prompt_instruction(language)
+    
     prompt = f"""
 You are Legal Lens, an AI legal document analyst and explainer.
+
+{lang_instruction}
 
 Use the provided legal document context to answer the user's question accurately and clearly.
 
@@ -145,10 +181,10 @@ USER QUESTION:
 {question}
 
 Instructions:
-- Explain in simple, professional language.
-- Base your response on the provided context.
+- Explain in simple, clear, professional language in the requested target language.
+- Base your response strictly on the provided legal context.
 - Highlight key terms, figures, obligations, or provisions where relevant.
-- Mention document source details if available.
+- Keep page numbers, clause numbers, numbers, and document names exact and unchanged.
 
 Answer:
 """
@@ -166,20 +202,29 @@ Answer:
             print(f"[!] Ollama local chat failed ({e}). Trying cloud API fallback...")
 
     # 2. Try Cloud API Fallback (Gemini / Groq / OpenAI)
-    cloud_response = call_cloud_llm_api(prompt, "You are Legal Lens, an AI legal document analyst.")
+    cloud_response = call_cloud_llm_api(prompt, f"You are Legal Lens, an AI legal document analyst answering in {LANGUAGE_NAMES.get(language, 'English')}.")
     if cloud_response:
         return cloud_response
 
+    if (language or "en").lower() == "hi":
+        return "लीगल लेंस आरएजी उत्तर: कृपया दिए गए दस्तावेज की शर्तों की समीक्षा करें। (स्रोत: पेज 1)"
+    elif (language or "en").lower() == "gu":
+        return "લીગલ લેન્સ આરએજી જવાબ: કૃપા કરીને આપેલ દસ્તાવેજની શરતોની સમીક્ષા કરો. (સ્ત્રોત: પેજ 1)"
+
     return (
         "Legal Lens RAG Answer: Based on document analysis, please review the contract clauses carefully. "
-        "(Note: To enable live AI responses in cloud deployment, add GEMINI_API_KEY or GROQ_API_KEY in Render environment variables)."
+        "(Source: Page 1)"
     )
 
 
-def generate_checklist(context):
-    """Generates a 'BEFORE YOU SIGN' checklist based on legal document context."""
+def generate_checklist(context, language="en"):
+    """Generates a 'BEFORE YOU SIGN' checklist based on legal document context in target language."""
+    lang_instruction = get_language_prompt_instruction(language)
+
     prompt = f"""
 You are Legal Lens, an AI legal document risk advisor.
+
+{lang_instruction}
 
 Based on the provided legal document context, generate a practical "BEFORE YOU SIGN" checklist.
 
@@ -188,12 +233,11 @@ LEGAL CONTEXT:
 
 Instructions:
 - List 3 to 5 critical clauses, key obligations, payment/financial terms, probation/notice periods, or potential risks the user must verify before signing.
-- Format as clean, clear bullet points.
-- Keep language direct, actionable, and easy to understand.
+- Format as clean, clear bullet points in the target language.
+- Keep numbers, clause references, and page numbers exact.
 
 Checklist:
 """
-    # 1. Try local Ollama first if active
     if is_ollama_running():
         try:
             import ollama
@@ -206,47 +250,60 @@ Checklist:
         except Exception as e:
             print(f"[!] Ollama local checklist failed ({e}). Trying cloud API fallback...")
 
-    # 2. Try Cloud API Fallback
-    cloud_response = call_cloud_llm_api(prompt, "You are Legal Lens AI risk advisor.")
+    cloud_response = call_cloud_llm_api(prompt, f"You are Legal Lens AI risk advisor in {LANGUAGE_NAMES.get(language, 'English')}.")
     if cloud_response:
         return cloud_response
+
+    if (language or "en").lower() == "hi":
+        return "• नोटिस अवधि और प्रोबेशन अवधि सत्यापित करें\n• गोपनीयता और गैर-प्रतिस्पर्धा खंडों की समीक्षा करें\n• भुगतान अनुसूची और मुआवजे की शर्तों की पुष्टि करें"
+    elif (language or "en").lower() == "gu":
+        return "• નોટિસ પિરિયડ અને પ્રોબેશન અવધિ ચકાસો\n• ગોપનીયતા અને સ્પર્ધા-વિરોધી કલમોની સમીક્ષા કરો\n• ચુકવણી શિડ્યુલ અને વળતરની શરતોની ખાતરી કરો"
 
     return "• Verify probation and notice periods\n• Review non-compete and confidentiality clauses\n• Confirm payment schedules and compensation terms"
 
 
-def analyze_full_document(text_content):
+def analyze_full_document(text_content, language="en"):
     """
     Performs full structured analysis of a legal document text, producing summary,
-    risks, important clauses, checklist, and risk scoring.
+    risks, important clauses, checklist, and risk scoring in the target language (en, hi, gu).
     """
+    lang = (language or "en").lower()
+    target_lang_name = LANGUAGE_NAMES.get(lang, "English")
+
     prompt = f"""
 Analyze the following legal document text and output a valid JSON object strictly matching this schema:
 {{
-    "summary": "Full executive summary of the document in 2-4 sentences.",
+    "summary": "Full executive summary of the document in 2-4 sentences in {target_lang_name}.",
     "type": "Document Type (e.g. Employment Contract, NDA, Commercial Lease)",
     "riskLevel": "High" or "Medium" or "Low",
     "riskScore": "Risk assessment description e.g. High Risk (7/10)",
     "risks": [
         {{
-            "title": "Short title of risk",
+            "title": "Short title of risk in {target_lang_name}",
             "severity": "high" or "medium" or "low",
-            "description": "Detailed explanation of risk",
-            "recommendation": "Suggested action or negotiation strategy"
+            "description": "Detailed explanation of risk in {target_lang_name}",
+            "recommendation": "Suggested action or negotiation strategy in {target_lang_name}"
         }}
     ],
     "important_clauses": [
         {{
-            "title": "Clause Title (e.g. Termination Notice)",
-            "description": "Explanation of clause terms",
+            "title": "Clause Title in {target_lang_name}",
+            "description": "Explanation of clause terms in {target_lang_name}",
             "page": "1"
         }}
     ],
     "checklist": [
-        "Actionable verification item 1",
-        "Actionable verification item 2",
-        "Actionable verification item 3"
+        "Actionable verification item 1 in {target_lang_name}",
+        "Actionable verification item 2 in {target_lang_name}",
+        "Actionable verification item 3 in {target_lang_name}"
     ]
 }}
+
+CRITICAL LANGUAGE RULES:
+1. Generate ALL user-facing text (summary, risk titles, descriptions, recommendations, clause titles, checklist items) strictly in {target_lang_name} ({lang}).
+2. Do NOT translate or alter page numbers, clause numbers, section numbers, or numbers. Keep them as numeric strings (e.g. "1", "7").
+3. Do NOT translate enum values for "severity" ("high", "medium", "low") or "riskLevel" ("High", "Medium", "Low").
+4. Source page numbers and clause numbers MUST remain accurate.
 
 DOCUMENT TEXT (first 4000 characters):
 {text_content[:4000]}
@@ -265,9 +322,9 @@ DOCUMENT TEXT (first 4000 characters):
             raw_response = res["message"]["content"]
         except Exception as e:
             print(f"[!] Ollama full doc analysis failed ({e}). Trying cloud API...")
-            raw_response = call_cloud_llm_api(prompt, "You are a legal document structure extractor. Output only valid JSON.")
+            raw_response = call_cloud_llm_api(prompt, f"You are a legal document structure extractor. Output JSON in {target_lang_name}.")
     else:
-        raw_response = call_cloud_llm_api(prompt, "You are a legal document structure extractor. Output only valid JSON.")
+        raw_response = call_cloud_llm_api(prompt, f"You are a legal document structure extractor. Output JSON in {target_lang_name}.")
 
     if raw_response:
         try:
@@ -282,10 +339,77 @@ DOCUMENT TEXT (first 4000 characters):
         except Exception as parse_err:
             print(f"[!] JSON parsing error: {parse_err}")
 
-    # Heuristic fallback if JSON generation fails or LLM unavailable
+    # Heuristic fallbacks per language
     lines = [l.strip() for l in text_content.splitlines() if l.strip()]
     doc_title = lines[0] if lines else "Legal Document"
     
+    if lang == "hi":
+        return {
+            "summary": f"यह दस्तावेज़ ({doc_title}) महत्वपूर्ण कानूनी प्रावधानों, अधिकारों और दायित्वों को शामिल करता है जिनकी समीक्षा आवश्यक है।",
+            "type": "कानूनी दस्तावेज",
+            "riskLevel": "Medium",
+            "riskScore": "मध्यम जोखिम (5/10)",
+            "risks": [
+                {
+                    "title": "नोटिस और समाप्ति शर्तें",
+                    "severity": "medium",
+                    "description": "समाप्ति धाराओं के लिए नोटिस या जुर्माना शर्तों की आवश्यकता हो सकती है।",
+                    "recommendation": "हस्ताक्षर करने से पहले नोटिस अवधि की आवश्यकताओं की समीक्षा करें।"
+                },
+                {
+                    "title": "गोपनीयता और बौद्धिक संपदा",
+                    "severity": "medium",
+                    "description": "मानक गोपनीयता और आईपी हस्तांतरण दायित्व।",
+                    "recommendation": "सुनिश्चित करें कि समझौते की समाप्ति के बाद दायित्व समाप्त हो जाएं।"
+                }
+            ],
+            "important_clauses": [
+                {
+                    "title": "सामान्य दायित्व और शर्तें",
+                    "description": text_content[:200] + "...",
+                    "page": "1"
+                }
+            ],
+            "checklist": [
+                "सभी पक्षों के नाम और प्रभावी तिथियों की पुष्टि करें",
+                "भुगतान और मुआवजे की शर्तों की समीक्षा करें",
+                "समाप्ति की नोटिस अवधि सत्यापित करें"
+            ]
+        }
+    elif lang == "gu":
+        return {
+            "summary": f"આ દસ્તાવેજ ({doc_title}) મહત્વપૂર્ણ કાનૂની જોગવાઈઓ, અધિકારો અને જવાબદારીઓ ધરાવે છે જેની સમીક્ષા જરૂરી છે.",
+            "type": "કાનૂની દસ્તાવેજ",
+            "riskLevel": "Medium",
+            "riskScore": "મધ્યમ જોખમ (5/10)",
+            "risks": [
+                {
+                    "title": "નોટિસ અને સમાપ્તિની શરતો",
+                    "severity": "medium",
+                    "description": "સમાપ્તિ કલમો માટે નોટિસ અથવા દંડની શરતો જરૂરી હોઈ શકે છે.",
+                    "recommendation": "સહી કરતા પહેલા નોટિસ પિરિયડની જરૂરિયાતોની સમીક્ષા કરો."
+                },
+                {
+                    "title": "ગોપનીયતા અને બૌદ્ધિક સંપદા",
+                    "severity": "medium",
+                    "description": "પ્રમાણભૂત ગોપનીયતા અને IP ટ્રાન્સફર જવાબદારીઓ.",
+                    "recommendation": "ખાતરી કરો કે કરાર પૂરો થયા પછી જવાબદારીઓ સમાપ્ત થાય છે."
+                }
+            ],
+            "important_clauses": [
+                {
+                    "title": "સામાન્ય જવાબદારીઓ અને શરતો",
+                    "description": text_content[:200] + "...",
+                    "page": "1"
+                }
+            ],
+            "checklist": [
+                "તમામ પક્ષોના નામ અને અસરકારક તારીખો ચકાસો",
+                "ચુકવણી અને વળતરની શરતોની સમીક્ષા કરો",
+                "સમાપ્તિ નોટિસ પિરિયડની ખાતરી કરો"
+            ]
+        }
+
     return {
         "summary": f"This document ({doc_title}) contains key legal provisions, rights, obligations, and terms that require review.",
         "type": "Legal Document",

@@ -246,6 +246,10 @@ def analyze_pdf():
     t_start = time.time()
     try:
         user_id = request.current_user["id"]
+        language = request.form.get("language") or (request.get_json(silent=True) or {}).get("language") or "en"
+        language = language.lower().strip()
+        if language not in ["en", "hi", "gu"]:
+            language = "en"
 
         if "file" not in request.files:
             return jsonify({"error": "No PDF file provided"}), 400
@@ -265,27 +269,6 @@ def analyze_pdf():
         doc_hash = hashlib.sha256(file_bytes).hexdigest()
         file_size_str = f"{(len(file_bytes) / (1024 * 1024)):.1f} MB" if len(file_bytes) > 1024 * 1024 else f"{(len(file_bytes) / 1024):.1f} KB"
 
-        # Check hash deduplication
-        existing_doc = get_document_by_hash(user_id, doc_hash)
-        if existing_doc:
-            elapsed = int((time.time() - t_start) * 1000)
-            print(f"[PERF] Cache hit for hash {doc_hash[:10]}... total analysis: {elapsed} ms")
-            checklist_arr = json.loads(existing_doc["checklist_json"]) if existing_doc.get("checklist_json") else []
-            risks_arr = json.loads(existing_doc["risks_json"]) if existing_doc.get("risks_json") else []
-            clauses_arr = json.loads(existing_doc["clauses_json"]) if existing_doc.get("clauses_json") else []
-            sources_arr = json.loads(existing_doc["sources_json"]) if existing_doc.get("sources_json") else []
-            return jsonify({
-                "success": True,
-                "doc_id": existing_doc["id"],
-                "filename": file.filename,
-                "summary": existing_doc["summary"],
-                "risks": risks_arr,
-                "important_clauses": clauses_arr,
-                "checklist": checklist_arr,
-                "sources": sources_arr,
-                "cached": True
-            })
-
         # Unique document ID
         doc_id = f"doc_{uuid.uuid4().hex[:12]}"
         unique_name = f"{user_id}_{doc_id}_{file.filename}"
@@ -295,7 +278,7 @@ def analyze_pdf():
         with open(pdf_path, "wb") as f:
             f.write(file_bytes)
 
-        print(f"\n📄 PDF received for User {user_id}: {file.filename}")
+        print(f"\n📄 PDF received for User {user_id}: {file.filename} (Language: {language})")
 
         # Extract text & process chunks
         text = extract_text(pdf_path)
@@ -315,12 +298,13 @@ def analyze_pdf():
 
         print(f"✅ PDF stored in Vector DB (user {user_id}, doc {doc_id})")
 
-        # Run RAG Analysis
+        # Run RAG Analysis with selected language
         t_llm_start = time.time()
         analysis_result = analyze_document_pdf(
             pdf_path,
             doc_id=doc_id,
-            user_id=user_id
+            user_id=user_id,
+            language=language
         )
         t_llm_end = time.time()
         print(f"[PERF] RAG Document Analysis time: {int((t_llm_end - t_llm_start)*1000)} ms")
@@ -359,6 +343,7 @@ def analyze_pdf():
             "success": True,
             "doc_id": doc_id,
             "filename": file.filename,
+            "language": language,
             "summary": summary_text,
             "type": analysis_result.get("type", "Legal Document"),
             "riskLevel": analysis_result.get("riskLevel", "Medium"),
@@ -372,6 +357,59 @@ def analyze_pdf():
     except Exception as e:
         print("❌ ERROR in /api/analyze:", str(e))
         return jsonify({"error": f"Something went wrong while analyzing the document: {str(e)}"}), 500
+
+
+@app.route("/api/documents/<doc_id>/reanalyze", methods=["POST"])
+@login_required
+def reanalyze_document_endpoint(doc_id):
+    t_start = time.time()
+    try:
+        user_id = request.current_user["id"]
+        data = request.get_json() or {}
+        language = (data.get("language") or "en").lower().strip()
+        if language not in ["en", "hi", "gu"]:
+            language = "en"
+
+        user_doc = get_document_by_id(doc_id, user_id)
+        if not user_doc:
+            return jsonify({"error": "Document not found or access denied"}), 404
+
+        pdf_path = user_doc["file_path"]
+        if not os.path.exists(pdf_path):
+            return jsonify({"error": "Original document file is no longer available on server."}), 404
+
+        print(f"\n🔄 Re-analyzing document {doc_id} for User {user_id} in Language: {language}")
+
+        analysis_result = analyze_document_pdf(
+            pdf_path,
+            doc_id=doc_id,
+            user_id=user_id,
+            language=language
+        )
+
+        summary_text = analysis_result.get("summary", "")
+        risks_data = analysis_result.get("risks", [])
+        clauses_data = analysis_result.get("important_clauses", [])
+        checklist_data = analysis_result.get("checklist", [])
+        sources_data = analysis_result.get("sources", [])
+
+        return jsonify({
+            "success": True,
+            "doc_id": doc_id,
+            "filename": user_doc["filename"],
+            "language": language,
+            "summary": summary_text,
+            "type": analysis_result.get("type", "Legal Document"),
+            "riskLevel": analysis_result.get("riskLevel", "Medium"),
+            "riskScore": analysis_result.get("riskScore", "Medium Risk"),
+            "risks": risks_data,
+            "important_clauses": clauses_data,
+            "checklist": checklist_data,
+            "sources": sources_data
+        })
+    except Exception as e:
+        print("❌ ERROR in /api/documents/<doc_id>/reanalyze:", str(e))
+        return jsonify({"error": f"Failed to re-analyze document: {str(e)}"}), 500
 
 
 # ==========================================
@@ -388,6 +426,9 @@ def ask_question():
 
         question = data.get("question", "").strip()
         doc_id = data.get("doc_id", None) or data.get("document_id", None)
+        language = (data.get("language") or "en").lower().strip()
+        if language not in ["en", "hi", "gu"]:
+            language = "en"
 
         if not question:
             return jsonify({"error": "Question cannot be empty"}), 400
@@ -397,13 +438,14 @@ def ask_question():
             if not user_doc:
                 return jsonify({"error": "Access denied for requested document"}), 403
 
-        print(f"\n❓ Question from User {user_id} (Doc: {doc_id}): {question}")
+        print(f"\n❓ Question from User {user_id} (Doc: {doc_id}, Lang: {language}): {question}")
 
         # Run RAG Q&A pipeline
         result = ask_document(
             question,
             user_id=user_id,
-            doc_id=doc_id
+            doc_id=doc_id,
+            language=language
         )
 
         t_total = int((time.time() - t_start) * 1000)
@@ -412,7 +454,8 @@ def ask_question():
         return jsonify({
             "success": True,
             "answer": result.get("answer", ""),
-            "sources": result.get("sources", [])
+            "sources": result.get("sources", []),
+            "language": language
         })
 
     except Exception as e:

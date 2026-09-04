@@ -264,7 +264,12 @@ class LegalLensAPIService {
   }
 
   // Multi-stage upload with Flask RAG backend (/api/analyze)
-  async uploadDocument(file, onStageChange = () => { }) {
+  async uploadDocument(file, language = 'en', onStageChange = () => { }) {
+    if (typeof language === 'function') {
+      onStageChange = language;
+      language = 'en';
+    }
+
     if (!file) {
       throw new Error('Please select a PDF file.');
     }
@@ -286,6 +291,7 @@ class LegalLensAPIService {
     try {
       const formData = new FormData();
       formData.append('file', file);
+      formData.append('language', language);
 
       let currentStageIdx = 0;
       const stageTimer = setInterval(() => {
@@ -334,6 +340,7 @@ class LegalLensAPIService {
         checklist: data.checklist,
         sources: data.sources
       });
+      formattedDoc.selectedLanguage = data.language || language;
 
       return formattedDoc;
     } catch (error) {
@@ -342,16 +349,65 @@ class LegalLensAPIService {
     }
   }
 
+  // Re-analyze existing document in a new language
+  async reanalyzeDocument(docId, language = 'en') {
+    if (!docId) throw new Error('Document ID required.');
+    try {
+      const response = await fetch(`${RAG_CONFIG.API_BASE_URL}/documents/${docId}/reanalyze`, {
+        method: 'POST',
+        headers: this.getAuthHeaders(true),
+        body: JSON.stringify({ language }),
+      });
+
+      if (response.status === 401) {
+        this.logoutUser();
+        window.location.reload();
+        throw new Error('Session expired. Please log in again.');
+      }
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to re-analyze document.');
+      }
+
+      const formattedDoc = this.formatDocumentFromBackend({
+        id: docId,
+        name: data.filename,
+        displayName: data.filename.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' '),
+        fileSize: '1.5 MB',
+        uploadDate: 'Today',
+        status: 'Document analyzed',
+        summary: data.summary,
+        type: data.type,
+        riskLevel: data.riskLevel,
+        riskScore: data.riskScore,
+        risks: data.risks,
+        important_clauses: data.important_clauses,
+        checklist: data.checklist,
+        sources: data.sources
+      });
+      formattedDoc.selectedLanguage = data.language || language;
+
+      return formattedDoc;
+    } catch (error) {
+      console.error('Re-analysis error:', error);
+      throw error;
+    }
+  }
+
   // Document-aware AI Q&A query engine (/api/ask)
-  async queryDocumentAI(arg1, arg2) {
+  async queryDocumentAI(arg1, arg2, arg3) {
     let docId = null;
     let userQuestion = '';
+    let language = 'en';
 
     if (typeof arg2 === 'string') {
       docId = arg1;
       userQuestion = arg2;
+      language = arg3 || 'en';
     } else {
       userQuestion = arg1 || '';
+      language = arg2 || 'en';
     }
 
     if (!userQuestion || !userQuestion.trim()) {
@@ -365,7 +421,8 @@ class LegalLensAPIService {
         body: JSON.stringify({
           question: userQuestion,
           doc_id: docId,
-          document_id: docId
+          document_id: docId,
+          language: language
         }),
       });
 
@@ -394,7 +451,8 @@ class LegalLensAPIService {
         source: sourceStr,
         page: pageStr,
         confidence: 'Grounded Ollama Answer',
-        isMock: false
+        isMock: false,
+        language: data.language || language
       };
     } catch (error) {
       console.error('Legal Lens Q&A backend error:', error.message);

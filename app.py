@@ -1,5 +1,6 @@
 import os
 import sys
+from backend.app import app
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BACKEND_DIR = os.path.join(SCRIPT_DIR, "backend")
