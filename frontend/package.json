@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node -e \"console.log('Production dist bundle ready in frontend/dist')\"",
+    "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
