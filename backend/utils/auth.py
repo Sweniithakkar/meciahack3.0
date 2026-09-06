@@ -15,11 +15,12 @@ def hash_password(password):
 def verify_password(password, password_hash):
     return check_password_hash(password_hash, password)
 
-def generate_token(user_id, email, name):
+def generate_token(user_id, email, name, role="user"):
     payload = {
         "user_id": user_id,
         "email": email,
         "name": name,
+        "role": role,
         "exp": datetime.datetime.utcnow() + datetime.timedelta(days=JWT_EXPIRATION_DAYS),
         "iat": datetime.datetime.utcnow()
     }
@@ -51,6 +52,33 @@ def login_required(f):
         user = get_user_by_id(payload["user_id"])
         if not user:
             return jsonify({"error": "User account no longer exists"}), 401
+        
+        request.current_user = user
+        return f(*args, **kwargs)
+    return decorated_function
+
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        auth_header = request.headers.get("Authorization", "")
+        token = None
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+        
+        if not token:
+            return jsonify({"error": "Authentication token required"}), 401
+        
+        payload = decode_token(token)
+        if not payload:
+            return jsonify({"error": "Invalid or expired authentication token"}), 401
+        
+        from utils.db import get_user_by_id
+        user = get_user_by_id(payload["user_id"])
+        if not user:
+            return jsonify({"error": "User account no longer exists"}), 401
+        
+        if user.get("role") != "admin":
+            return jsonify({"error": "Admin access required. Access denied."}), 403
         
         request.current_user = user
         return f(*args, **kwargs)

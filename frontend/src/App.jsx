@@ -15,6 +15,7 @@ import MyDocumentsView from './components/MyDocumentsView';
 import ClauseDetailModal from './components/ClauseDetailModal';
 import ReportModal from './components/ReportModal';
 import AuthView from './components/AuthView';
+import AdminView from './components/AdminView';
 import { apiService } from './services/apiService';
 import { SAMPLE_DOCUMENTS } from './data/mockData';
 
@@ -23,8 +24,16 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(() => apiService.getCurrentUser());
   const [isVerifyingAuth, setIsVerifyingAuth] = useState(true);
 
-  // Navigation & View State: 'home' | 'analysis' | 'my-documents'
-  const [activeNav, setActiveNav] = useState('home');
+  // Navigation & View State: 'home' | 'analysis' | 'my-documents' | 'admin'
+  const [activeNav, setActiveNav] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const p = window.location.pathname;
+      const h = window.location.hash;
+      if (p.startsWith('/admin') || h.startsWith('#/admin')) return 'admin';
+      if (p.startsWith('/my-documents') || h.startsWith('#/my-documents')) return 'my-documents';
+    }
+    return 'home';
+  });
   const [hasUploadedDoc, setHasUploadedDoc] = useState(false);
   const [currentDocId, setCurrentDocId] = useState(null);
   const [currentDoc, setCurrentDoc] = useState(null);
@@ -44,6 +53,28 @@ export default function App() {
   // Toast feedback
   const [toastMessage, setToastMessage] = useState('');
 
+  // Synchronize browser URL popstate navigation
+  useEffect(() => {
+    const handlePopState = () => {
+      const path = window.location.pathname;
+      const hash = window.location.hash;
+      if (path.startsWith('/admin') || hash.startsWith('#/admin')) {
+        if (currentUser && currentUser.role === 'admin') {
+          setActiveNav('admin');
+        } else {
+          setActiveNav('home');
+        }
+      } else if (path.startsWith('/my-documents') || hash.startsWith('#/my-documents')) {
+        setActiveNav('my-documents');
+      } else {
+        setActiveNav('home');
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [currentUser]);
+
   // Verify auth session on initial load
   useEffect(() => {
     let isMounted = true;
@@ -51,6 +82,16 @@ export default function App() {
       if (isMounted) {
         setCurrentUser(user);
         setIsVerifyingAuth(false);
+        const path = window.location.pathname;
+        const hash = window.location.hash;
+        if (path.startsWith('/admin') || hash.startsWith('#/admin')) {
+          if (user && user.role === 'admin') {
+            setActiveNav('admin');
+          } else {
+            setActiveNav('home');
+            window.history.replaceState({}, '', '/');
+          }
+        }
       }
     }).catch(() => {
       if (isMounted) setIsVerifyingAuth(false);
@@ -177,9 +218,19 @@ export default function App() {
   const handleNavigate = (targetNav) => {
     if (targetNav === 'home') {
       setActiveNav('home');
+      try { window.history.pushState({}, '', '/'); } catch (_) {}
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } else if (targetNav === 'my-documents') {
       setActiveNav('my-documents');
+      try { window.history.pushState({}, '', '/my-documents'); } catch (_) {}
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (targetNav === 'admin') {
+      if (!currentUser || currentUser.role !== 'admin') {
+        showToast('Access Denied: Admin privileges required.');
+        return;
+      }
+      setActiveNav('admin');
+      try { window.history.pushState({}, '', '/admin'); } catch (_) {}
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } else if (targetNav === 'analysis') {
       if (!hasUploadedDoc) {
@@ -275,6 +326,12 @@ export default function App() {
             onSelectDocument={handleSelectDocument}
             onNewDocument={() => setActiveNav('home')}
             onDownloadReport={(doc) => setReportModalDoc(doc || currentDoc)}
+          />
+        ) : activeNav === 'admin' ? (
+          /* View 3: Admin Console */
+          <AdminView
+            currentUser={currentUser}
+            onNavigateHome={() => setActiveNav('home')}
           />
         ) : (
           /* View 3 & 4: Continuous document analysis with an integrated assistant panel */

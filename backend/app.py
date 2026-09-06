@@ -22,12 +22,14 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 
 from utils.db import (
-    init_db, create_user, get_user_by_email, get_user_by_id,
+    init_db, ping_db, create_user, get_user_by_email, get_user_by_id,
     create_document, get_user_documents, get_document_by_id,
-    get_document_by_hash, delete_user_document
+    get_document_by_hash, delete_user_document, log_activity,
+    get_user_activity_logs, get_admin_stats, get_all_users_admin,
+    get_all_activity_admin, get_all_documents_admin, get_user_details_admin
 )
 from utils.auth import (
-    hash_password, verify_password, generate_token, login_required
+    hash_password, verify_password, generate_token, login_required, admin_required
 )
 from utils.pdf_loader import extract_text
 from utils.chunker import create_chunks
@@ -73,6 +75,23 @@ def health():
     })
 
 
+@app.route("/api/db-health")
+def db_health():
+    is_ok, db_provider = ping_db()
+    if is_ok:
+        return jsonify({
+            "status": "ok",
+            "database": db_provider,
+            "message": f"Successfully connected to {db_provider}"
+        })
+    else:
+        return jsonify({
+            "status": "error",
+            "database": db_provider,
+            "error": "Failed to connect to database"
+        }), 500
+
+
 # ==========================================
 # AUTHENTICATION ENDPOINTS
 # ==========================================
@@ -102,7 +121,9 @@ def register():
         if not user:
             return jsonify({"error": "Failed to create user account"}), 500
 
-        token = generate_token(user["id"], user["email"], user["name"])
+        log_activity(user["id"], "USER_REGISTER", f"Registered account for {email}")
+
+        token = generate_token(user["id"], user["email"], user["name"], user.get("role", "user"))
 
         return jsonify({
             "success": True,
@@ -110,7 +131,8 @@ def register():
             "user": {
                 "id": user["id"],
                 "name": user["name"],
-                "email": user["email"]
+                "email": user["email"],
+                "role": user.get("role", "user")
             }
         })
     except Exception as e:
@@ -128,11 +150,14 @@ def login():
         if not email or not password:
             return jsonify({"error": "Email and password are required"}), 400
 
-        user_record = get_user_by_email(email)
+        user_record = get_user_by_email(email, include_password=True)
         if not user_record or not verify_password(password, user_record["password_hash"]):
             return jsonify({"error": "Invalid email or password"}), 401
 
-        token = generate_token(user_record["id"], user_record["email"], user_record["name"])
+        log_activity(user_record["id"], "USER_LOGIN", f"User logged in with email {email}")
+
+        user_role = user_record.get("role", "user")
+        token = generate_token(user_record["id"], user_record["email"], user_record["name"], user_role)
 
         return jsonify({
             "success": True,
@@ -140,7 +165,8 @@ def login():
             "user": {
                 "id": user_record["id"],
                 "name": user_record["name"],
-                "email": user_record["email"]
+                "email": user_record["email"],
+                "role": user_role
             }
         })
     except Exception as e:
@@ -157,8 +183,64 @@ def get_current_user_profile():
         "user": {
             "id": user["id"],
             "name": user["name"],
-            "email": user["email"]
+            "email": user["email"],
+            "role": user.get("role", "user")
         }
+    })
+
+
+@app.route("/api/activity-logs", methods=["GET"])
+@login_required
+def list_activity_logs():
+    user_id = request.current_user["id"]
+    logs = get_user_activity_logs(user_id)
+    return jsonify({
+        "success": True,
+        "activity_logs": logs
+    })
+
+
+# ==========================================
+# ADMIN DASHBOARD ENDPOINTS
+# ==========================================
+
+@app.route("/api/admin/stats", methods=["GET"])
+@admin_required
+def admin_stats():
+    stats = get_admin_stats()
+    return jsonify({
+        "success": True,
+        "stats": stats
+    })
+
+
+@app.route("/api/admin/users", methods=["GET"])
+@admin_required
+def admin_users():
+    users = get_all_users_admin()
+    return jsonify({
+        "success": True,
+        "users": users
+    })
+
+
+@app.route("/api/admin/activity", methods=["GET"])
+@admin_required
+def admin_activity():
+    activities = get_all_activity_admin()
+    return jsonify({
+        "success": True,
+        "activity_logs": activities
+    })
+
+
+@app.route("/api/admin/documents", methods=["GET"])
+@admin_required
+def admin_documents():
+    documents = get_all_documents_admin()
+    return jsonify({
+        "success": True,
+        "documents": documents
     })
 
 
@@ -229,6 +311,8 @@ def delete_document(doc_id):
 
     if not success:
         return jsonify({"error": "Document not found or unauthorized"}), 404
+
+    log_activity(user_id, "DOCUMENT_DELETE", f"Deleted document {doc_id}")
 
     return jsonify({
         "success": True,
@@ -335,6 +419,8 @@ def analyze_pdf():
             sources_json=json.dumps(sources_data),
             clauses_json=json.dumps(clauses_data)
         )
+
+        log_activity(user_id, "DOCUMENT_ANALYZE", f"Analyzed document {doc_id} ({file.filename})")
 
         t_total = int((time.time() - t_start) * 1000)
         print(f"[PERF] Total analysis pipeline execution time: {t_total} ms")
@@ -451,6 +537,8 @@ def ask_question():
         t_total = int((time.time() - t_start) * 1000)
         print(f"[PERF] Total Q&A response time: {t_total} ms")
 
+        log_activity(user_id, "RAG_QUESTION", f"Asked question on doc_id={doc_id}")
+
         return jsonify({
             "success": True,
             "answer": result.get("answer", ""),
@@ -461,6 +549,82 @@ def ask_question():
     except Exception as e:
         print("❌ ERROR in /api/ask:", str(e))
         return jsonify({"error": "Unable to answer the question."}), 500
+
+
+# ==========================================
+# ADMIN DASHBOARD TELEMETRY ENDPOINTS
+# ==========================================
+
+@app.route("/api/admin/stats", methods=["GET"])
+@admin_required
+def admin_stats_endpoint():
+    try:
+        stats = get_admin_stats()
+        return jsonify({
+            "success": True,
+            "stats": stats
+        })
+    except Exception as e:
+        print("❌ Error in /api/admin/stats:", str(e))
+        return jsonify({"error": "Failed to fetch admin stats"}), 500
+
+
+@app.route("/api/admin/users", methods=["GET"])
+@admin_required
+def admin_users_endpoint():
+    try:
+        users = get_all_users_admin()
+        return jsonify({
+            "success": True,
+            "users": users
+        })
+    except Exception as e:
+        print("❌ Error in /api/admin/users:", str(e))
+        return jsonify({"error": "Failed to fetch users list"}), 500
+
+
+@app.route("/api/admin/users/<int:user_id>", methods=["GET"])
+@admin_required
+def admin_user_detail_endpoint(user_id):
+    try:
+        details = get_user_details_admin(user_id)
+        if not details:
+            return jsonify({"error": "User not found"}), 404
+        return jsonify({
+            "success": True,
+            **details
+        })
+    except Exception as e:
+        print(f"❌ Error in /api/admin/users/{user_id}:", str(e))
+        return jsonify({"error": "Failed to fetch user details"}), 500
+
+
+@app.route("/api/admin/activity", methods=["GET"])
+@admin_required
+def admin_activity_endpoint():
+    try:
+        logs = get_all_activity_admin()
+        return jsonify({
+            "success": True,
+            "activity_logs": logs
+        })
+    except Exception as e:
+        print("❌ Error in /api/admin/activity:", str(e))
+        return jsonify({"error": "Failed to fetch system activity"}), 500
+
+
+@app.route("/api/admin/documents", methods=["GET"])
+@admin_required
+def admin_documents_endpoint():
+    try:
+        docs = get_all_documents_admin()
+        return jsonify({
+            "success": True,
+            "documents": docs
+        })
+    except Exception as e:
+        print("❌ Error in /api/admin/documents:", str(e))
+        return jsonify({"error": "Failed to fetch document store"}), 500
 
 
 # ==========================================

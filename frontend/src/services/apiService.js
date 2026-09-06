@@ -465,6 +465,70 @@ class LegalLensAPIService {
       };
     }
   }
+
+  // ============================================================
+  // ADMIN DASHBOARD APIs
+  // ============================================================
+
+  async getAdminStats() {
+    const response = await fetch(`${RAG_CONFIG.API_BASE_URL}/admin/stats`, {
+      method: 'GET',
+      headers: this.getAuthHeaders(),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to fetch admin stats.');
+    }
+    return data.stats;
+  }
+
+  async getAdminUsers() {
+    const response = await fetch(`${RAG_CONFIG.API_BASE_URL}/admin/users`, {
+      method: 'GET',
+      headers: this.getAuthHeaders(),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to fetch user directory.');
+    }
+    return data.users;
+  }
+
+  async getAdminActivity() {
+    const response = await fetch(`${RAG_CONFIG.API_BASE_URL}/admin/activity`, {
+      method: 'GET',
+      headers: this.getAuthHeaders(),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to fetch system activity.');
+    }
+    return data.activity_logs;
+  }
+
+  async getAdminDocuments() {
+    const response = await fetch(`${RAG_CONFIG.API_BASE_URL}/admin/documents`, {
+      method: 'GET',
+      headers: this.getAuthHeaders(),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to fetch document stats.');
+    }
+    return data.documents;
+  }
+
+  async getAdminUserById(userId) {
+    const response = await fetch(`${RAG_CONFIG.API_BASE_URL}/admin/users/${userId}`, {
+      method: 'GET',
+      headers: this.getAuthHeaders(),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to fetch user details.');
+    }
+    return data;
+  }
 }
 
 export const apiService = new LegalLensAPIService();

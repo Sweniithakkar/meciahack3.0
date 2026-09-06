@@ -34,6 +34,10 @@ export default function Header({
     { id: 'before-you-sign', label: 'Before You Sign', requiresDoc: true }
   ];
 
+  if (currentUser && currentUser.role === 'admin') {
+    navItems.push({ id: 'admin', label: 'Admin Console', requiresDoc: false });
+  }
+
   return (
     <header className="sticky top-0 z-40 w-full border-b border-[#D2DBEB]/80 bg-white/95 backdrop-blur-md transition-all shadow-xs">
       <div className="w-full flex h-16 items-center justify-between px-4 sm:px-6 lg:px-10 xl:px-12">
@@ -150,12 +154,31 @@ export default function Header({
                   onClick={() => setProfileOpen(false)} 
                 />
                 <div className="absolute right-0 mt-2 w-64 rounded-xl border border-[#D2DBEB] bg-white p-2 shadow-xl z-20 animate-in fade-in slide-in-from-top-2 duration-150">
-                  <div className="px-3 py-2 border-b border-[#D2DBEB]/60">
-                    <p className="text-xs font-bold text-[#01162B]">{currentUser?.name || 'Legal Lens User'}</p>
-                    <p className="text-[11px] text-[#6A90B4] truncate">{currentUser?.email || 'user@example.com'}</p>
+                  <div className="px-3 py-2 border-b border-[#D2DBEB]/60 flex items-center justify-between">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-bold text-[#01162B] truncate">{currentUser?.name || 'Legal Lens User'}</p>
+                      <p className="text-[11px] text-[#6A90B4] truncate">{currentUser?.email || 'user@example.com'}</p>
+                    </div>
+                    {currentUser?.role === 'admin' && (
+                      <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-[9px] font-bold rounded-full uppercase border border-amber-200 ml-2">
+                        Admin
+                      </span>
+                    )}
                   </div>
 
                   <div className="py-1">
+                    {currentUser?.role === 'admin' && (
+                      <button
+                        onClick={() => {
+                          onNavigate('admin');
+                          setProfileOpen(false);
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-amber-800 bg-amber-50/50 hover:bg-amber-100/60 rounded-lg transition-colors text-left mb-1"
+                      >
+                        <ShieldCheck className="h-3.5 w-3.5 text-amber-700" />
+                        Admin Console
+                      </button>
+                    )}
                     <button
                       onClick={() => {
                         onNavigate('my-documents');
