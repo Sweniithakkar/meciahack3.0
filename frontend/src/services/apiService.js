@@ -639,6 +639,10 @@ class LegalLensAPIService {
     }
     return false;
   }
+
 }
 
 export const apiService = new LegalLensAPIService();
+
+
+

@@ -9,8 +9,10 @@ export default function FloatingChatbot({ currentDoc, initialQuestion, onClearIn
   const [isTyping, setIsTyping] = useState(false);
   const [copiedId, setCopiedId] = useState(null);
   const [isListening, setIsListening] = useState(false);
+
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
+  const recognitionRef = useRef(null);
 
   const currentUser = apiService.getCurrentUser();
   const storageKey = currentDoc?.id ? `legalLensChatHistory_${currentUser?.id || 'guest'}_${currentDoc.id}` : null;
@@ -110,6 +112,15 @@ export default function FloatingChatbot({ currentDoc, initialQuestion, onClearIn
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isTyping]);
 
+  // Clean up Web Speech Recognition on unmount
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        try { recognitionRef.current.abort(); } catch (_) {}
+      }
+    };
+  }, []);
+
   const handleSendMessage = async (textToSend) => {
     const text = (textToSend || inputVal).trim();
     if (!text || !currentDoc?.id) return;
@@ -188,15 +199,71 @@ export default function FloatingChatbot({ currentDoc, initialQuestion, onClearIn
     await apiService.clearChatHistory(currentDoc.id);
   };
 
+  // Browser Native Web Speech API STT
   const toggleVoice = () => {
-    if (isListening) return setIsListening(false);
-    setIsListening(true);
-    setTimeout(() => {
-      const q = (suggestedQuestionsList.length > 0 ? suggestedQuestionsList[0] : 'What are the main terms of this document?');
-      setInputVal(q);
+    if (isListening) {
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch (_) {}
+      }
       setIsListening(false);
-      inputRef.current?.focus();
-    }, 1800);
+      return;
+    }
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert('Voice input is not supported in this browser. Please use Chrome or Edge, or type your message.');
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = true;
+
+      // Select speech language based on document selected language
+      const langCode = currentDoc?.selectedLanguage || 'en';
+      if (langCode === 'hi') {
+        recognition.lang = 'hi-IN';
+      } else if (langCode === 'gu') {
+        recognition.lang = 'gu-IN';
+      } else {
+        recognition.lang = 'en-IN';
+      }
+
+      recognition.onstart = () => {
+        setIsListening(true);
+      };
+
+      recognition.onresult = (event) => {
+        let currentTranscript = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          currentTranscript += event.results[i][0].transcript;
+        }
+        if (currentTranscript) {
+          setInputVal(currentTranscript);
+        }
+      };
+
+      recognition.onerror = (event) => {
+        console.warn('Speech recognition error:', event.error);
+        setIsListening(false);
+        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+          alert('Microphone permission was denied. Please allow microphone access and try again.');
+        }
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+        inputRef.current?.focus();
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (err) {
+      console.error('Failed to start browser Speech Recognition:', err);
+      setIsListening(false);
+      alert('Microphone access or speech recognition failed. Please try again.');
+    }
   };
 
   const renderFormattedMessage = (text) => {
@@ -357,16 +424,18 @@ export default function FloatingChatbot({ currentDoc, initialQuestion, onClearIn
             type="text"
             value={inputVal}
             onChange={(event) => setInputVal(event.target.value)}
-            placeholder={`Ask anything about ${currentDoc?.name || 'this document'}...`}
+            placeholder={isListening ? 'Listening...' : `Ask anything about ${currentDoc?.name || 'this document'}...`}
             className="min-w-0 flex-1 bg-transparent px-2 py-2 text-sm text-[#01162B] placeholder-[#94A2BF] outline-none"
           />
           <button
             type="button"
             onClick={toggleVoice}
-            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
-              isListening ? 'animate-pulse bg-red-500 text-white' : 'text-[#6A90B4] hover:bg-white hover:text-[#01162B]'
+            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-all ${
+              isListening
+                ? 'animate-pulse bg-red-500 text-white shadow-md'
+                : 'text-[#6A90B4] hover:bg-white hover:text-[#01162B]'
             }`}
-            title={isListening ? 'Listening...' : 'Voice query'}
+            title={isListening ? 'Listening... Click to stop' : 'Voice input (Web Speech API)'}
           >
             <Mic className="h-4 w-4" />
           </button>
@@ -379,6 +448,7 @@ export default function FloatingChatbot({ currentDoc, initialQuestion, onClearIn
             <Send className="h-4 w-4" />
           </button>
         </form>
+
         <p className="mt-2 px-1 text-[10px] text-[#94A2BF]">Informational analysis only · Not formal legal advice</p>
       </div>
     </section>

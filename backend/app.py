@@ -18,7 +18,17 @@ if os.path.exists(venv_site) and venv_site not in sys.path:
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
+# Load environment variables from .env files with override
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(PROJECT_ROOT, ".env"), override=True)
+    load_dotenv(os.path.join(SCRIPT_DIR, ".env"), override=True)
+    load_dotenv(override=True)
+except Exception:
+    pass
+
 from flask import Flask, request, jsonify
+
 from flask_cors import CORS
 
 from utils.db import (
@@ -767,10 +777,10 @@ def admin_documents_endpoint():
         print("❌ Error in /api/admin/documents:", str(e))
         return jsonify({"error": "Failed to fetch document store"}), 500
 
-
 # ==========================================
 # RUN SERVER
 # ==========================================
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
@@ -779,6 +789,8 @@ if __name__ == "__main__":
     print("===================================")
     print(f"Server starting on 0.0.0.0:{port}")
     print("===================================\n")
+
+
 
     app.run(
         host="0.0.0.0",
