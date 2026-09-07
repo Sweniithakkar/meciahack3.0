@@ -21,7 +21,7 @@ BACKEND_DIR = os.path.dirname(SCRIPT_DIR)
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
-from utils.risk_engine import compute_risk_level
+from utils.risk_engine import compute_risk_level, round_half_up
 
 DEFAULT_MODEL = "llama3.2:3b"
 
@@ -462,7 +462,7 @@ def analyze_full_document(text_content, language="en"):
 
     raw_score = float(s_max) + (0.28 * float(evaluated_clause_count))
     clamped_score = min(10.0, max(1.0, raw_score))
-    base_level = int(math.floor(clamped_score + 0.5))
+    base_level = round_half_up(clamped_score)
     hard_trigger = (n_high >= 1) or (evaluated_clause_count >= 26)
     final_risk_level = risk_obj["risk_level"]
 

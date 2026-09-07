@@ -32,11 +32,12 @@ Mathematical Formulation:
 """
 
 import math
+from decimal import Decimal, ROUND_HALF_UP
 
 
 def round_half_up(val):
-    """Rounds floating point value to nearest integer using exact round half up rule."""
-    return int(math.floor(float(val) + 0.5))
+    """Rounds numeric value to nearest integer using exact Decimal ROUND_HALF_UP rule."""
+    return int(Decimal(str(val)).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
 
 
 def compute_risk_level(clauses=None, scores=None, n=None, s_max=None, n_high=None):
