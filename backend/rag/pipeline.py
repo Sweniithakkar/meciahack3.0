@@ -47,14 +47,36 @@ def analyze_document_pdf(pdf_path, doc_id=None, user_id=None, language="en"):
 def ask_document(question, user_id=None, doc_id=None, language="en"):
     """
     Runs Q&A pipeline over vector store context for a user / document query in target language.
+    Generates grounded responses using Legal Lens Work Agent based on retrieved document chunks.
     """
-    results = retrieve_documents(question, n_results=5)
+    q_clean = (question or "").strip()
+
+    # Step 9: Handle vague / generic questions gracefully
+    vague_queries = ["give me the solution", "solution", "help me", "what is the solution", "tell me everything", "overview"]
+    if q_clean.lower() in vague_queries or (len(q_clean.split()) <= 2 and q_clean.lower() in ["help", "solution", "details", "explain"]):
+        vague_ans = (
+            "Sure — what would you like help with in this document? For example:\n"
+            "• Notice period\n"
+            "• Penalties\n"
+            "• Termination clauses\n"
+            "• Your obligations\n"
+            "• Risky clauses\n"
+            "• What to check before signing"
+        )
+        return {
+            "answer": vague_ans,
+            "sources": [],
+            "language": language
+        }
+
+    results = retrieve_documents(q_clean, doc_id=doc_id, user_id=user_id, n_results=5)
 
     documents = results["documents"][0] if results and "documents" in results and results["documents"] else []
     metadata = results["metadatas"][0] if results and "metadatas" in results and results["metadatas"] else []
 
     context = ""
     sources = []
+    meta_info_list = []
 
     for i, document in enumerate(documents):
         meta = metadata[i] if i < len(metadata) else {}
@@ -68,11 +90,27 @@ CONTENT:
 -------------------------
 """
         sources.append({"filename": source_name, "page": page_num})
+        meta_info_list.append(f"Source: {source_name}, Page: {page_num}")
+
+    meta_info_str = "\n".join(meta_info_list)
+
+    # Step 2: Server-side debug log
+    print(f"\n==================== RAG DEBUG LOG ====================")
+    print(f"QUESTION: {question}")
+    print(f"DOC ID: {doc_id} | USER ID: {user_id}")
+    print(f"RETRIEVED CHUNKS COUNT: {len(documents)}")
+    print(f"SOURCE PAGES: {[s['page'] for s in sources]}")
+    print(f"RETRIEVED CONTEXT SNIPPET:\n{context[:300]}...")
+    print(f"=======================================================\n")
 
     if not context.strip():
-        context = f"Question: {question}. Context: Legal Lens uploaded document."
+        context = f"Question: {question}. Context: Uploaded document does not have extracted text."
 
-    answer = generate_answer(question, context, language=language)
+    try:
+        answer = generate_answer(question, context, language=language, metadata_info=meta_info_str)
+    except Exception as err:
+        print(f"❌ RAG Generation Error: {err}")
+        answer = f"Error generating document answer: {str(err)}"
 
     return {
         "answer": answer,

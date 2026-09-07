@@ -103,19 +103,33 @@ def safe_log(msg):
 
 
 def init_db():
-    """Creates all database tables (users, documents, activity_logs) if they do not exist."""
+    """Creates all database tables (users, documents, activity_logs, chat_messages) if they do not exist."""
     Base.metadata.create_all(bind=engine)
     
-    # Non-destructive migration check: add role column to users table if missing from prior schema
+    # Non-destructive migration checks: add missing columns if upgrading schema
     try:
         with engine.connect() as conn:
             if IS_POSTGRES:
                 conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(32) DEFAULT 'user';"))
+                conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS doc_type VARCHAR(255);"))
+                conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS risk_level VARCHAR(64);"))
+                conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS risk_score VARCHAR(128);"))
+                conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS suggested_questions_json TEXT;"))
             else:
                 inspector = inspect(engine)
-                columns = [c["name"] for c in inspector.get_columns("users")]
-                if "role" not in columns:
+                u_cols = [c["name"] for c in inspector.get_columns("users")]
+                if "role" not in u_cols:
                     conn.execute(text("ALTER TABLE users ADD COLUMN role VARCHAR(32) DEFAULT 'user';"))
+                
+                d_cols = [c["name"] for c in inspector.get_columns("documents")]
+                if "doc_type" not in d_cols:
+                    conn.execute(text("ALTER TABLE documents ADD COLUMN doc_type VARCHAR(255);"))
+                if "risk_level" not in d_cols:
+                    conn.execute(text("ALTER TABLE documents ADD COLUMN risk_level VARCHAR(64);"))
+                if "risk_score" not in d_cols:
+                    conn.execute(text("ALTER TABLE documents ADD COLUMN risk_score VARCHAR(128);"))
+                if "suggested_questions_json" not in d_cols:
+                    conn.execute(text("ALTER TABLE documents ADD COLUMN suggested_questions_json TEXT;"))
             conn.commit()
     except Exception as e:
         safe_log(f"[!] Migration check notice: {e}")
@@ -123,6 +137,7 @@ def init_db():
     db_type = "PostgreSQL (Supabase)" if IS_POSTGRES else "SQLite (Local)"
     safe_log(f"[+] Database initialized successfully utilizing {db_type}")
     bootstrap_admin_user()
+
 
 
 def ping_db():
@@ -172,28 +187,47 @@ def create_user(name, email, password_hash, role="user"):
 
 
 def bootstrap_admin_user():
-    """Ensures single admin user configured via ADMIN_EMAIL has admin role."""
-    admin_email = os.environ.get("ADMIN_EMAIL", "").strip().lower()
-    if not admin_email:
-        return None
-
+    """Ensures single admin user configured via ADMIN_EMAIL has admin role and clean display name."""
     session = ScopedSession()
     try:
+        # Sanitize any legacy database records with hardcoded "System Admin" name
+        system_admins = session.query(User).filter(User.name.in_(["System Admin", "system_admin"])).all()
+        for sa in system_admins:
+            clean_name = sa.email.split("@")[0].replace(".", " ").replace("_", " ").title() if sa.email else "Admin"
+            sa.name = clean_name
+            safe_log(f"[+] Updated legacy user name for {sa.email} to '{clean_name}'")
+        if system_admins:
+            session.commit()
+
+        admin_email = os.environ.get("ADMIN_EMAIL", "").strip().lower()
+        if not admin_email:
+            session.close()
+            return None
+
         user = session.query(User).filter(User.email == admin_email).first()
         if user:
+            changed = False
             if user.role != "admin":
                 user.role = "admin"
-                session.commit()
+                changed = True
                 safe_log(f"[+] Promoted user {admin_email} to admin role")
+            admin_name = os.environ.get("ADMIN_NAME", "").strip()
+            if admin_name and user.name != admin_name:
+                user.name = admin_name
+                changed = True
+            if changed:
+                session.commit()
+            user_dict = user.to_dict()
             session.close()
-            return user.to_dict()
+            return user_dict
         
         admin_pass = os.environ.get("ADMIN_INITIAL_PASSWORD", "").strip()
         if admin_pass:
             from werkzeug.security import generate_password_hash
             pwd_hash = generate_password_hash(admin_pass)
+            admin_name = os.environ.get("ADMIN_NAME", "").strip() or (admin_email.split("@")[0].replace(".", " ").replace("_", " ").title() if admin_email else "Admin")
             new_admin = User(
-                name="System Admin",
+                name=admin_name,
                 email=admin_email,
                 password_hash=pwd_hash,
                 role="admin"
@@ -245,7 +279,7 @@ def get_user_by_id(user_id):
 # DOCUMENT MANAGEMENT FUNCTIONS
 # ==========================================
 
-def create_document(doc_id, user_id, filename, display_name, file_path, document_hash, file_size, upload_date, status, summary, checklist_json, risks_json, sources_json, clauses_json):
+def create_document(doc_id, user_id, filename, display_name, file_path, document_hash, file_size, upload_date, status, summary, checklist_json, risks_json, sources_json, clauses_json, doc_type=None, risk_level=None, risk_score=None, suggested_questions_json=None):
     session = ScopedSession()
     try:
         doc = Document(
@@ -262,7 +296,11 @@ def create_document(doc_id, user_id, filename, display_name, file_path, document
             checklist_json=checklist_json,
             risks_json=risks_json,
             sources_json=sources_json,
-            clauses_json=clauses_json
+            clauses_json=clauses_json,
+            doc_type=doc_type,
+            risk_level=risk_level,
+            risk_score=risk_score,
+            suggested_questions_json=suggested_questions_json
         )
         session.add(doc)
         session.commit()
@@ -541,3 +579,71 @@ def get_all_documents_admin(limit=100):
         safe_log(f"[!] Error in get_all_documents_admin: {e}")
         session.close()
         return []
+
+
+# ==========================================
+# CHAT MESSAGE FUNCTIONS
+# ==========================================
+
+from models import ChatMessage
+import uuid
+
+def save_chat_message(user_id, document_id, sender, text, source=None, page=None, confidence=None, message_id=None):
+    session = ScopedSession()
+    try:
+        msg_id = message_id or f"msg_{uuid.uuid4().hex[:12]}"
+        msg = ChatMessage(
+            id=msg_id,
+            user_id=int(user_id),
+            document_id=document_id,
+            sender=sender,
+            text=text,
+            source=source,
+            page=str(page) if page else None,
+            confidence=confidence
+        )
+        session.add(msg)
+        session.commit()
+        session.refresh(msg)
+        msg_dict = msg.to_dict()
+        session.close()
+        return msg_dict
+    except Exception as e:
+        safe_log(f"[!] Error in save_chat_message: {e}")
+        session.rollback()
+        session.close()
+        return None
+
+
+def get_chat_history(user_id, document_id):
+    session = ScopedSession()
+    try:
+        msgs = session.query(ChatMessage).filter(
+            ChatMessage.user_id == int(user_id),
+            ChatMessage.document_id == document_id
+        ).order_by(ChatMessage.created_at.asc()).all()
+        msg_dicts = [m.to_dict() for m in msgs]
+        session.close()
+        return msg_dicts
+    except Exception as e:
+        safe_log(f"[!] Error in get_chat_history: {e}")
+        session.close()
+        return []
+
+
+def clear_chat_history(user_id, document_id):
+    session = ScopedSession()
+    try:
+        session.query(ChatMessage).filter(
+            ChatMessage.user_id == int(user_id),
+            ChatMessage.document_id == document_id
+        ).delete()
+        session.commit()
+        session.close()
+        return True
+    except Exception as e:
+        safe_log(f"[!] Error in clear_chat_history: {e}")
+        session.rollback()
+        session.close()
+        return False
+

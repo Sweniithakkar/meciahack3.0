@@ -47,6 +47,10 @@ class Document(Base):
     risks_json = Column(Text, nullable=True)
     sources_json = Column(Text, nullable=True)
     clauses_json = Column(Text, nullable=True)
+    doc_type = Column(String(255), nullable=True)
+    risk_level = Column(String(64), nullable=True)
+    risk_score = Column(String(128), nullable=True)
+    suggested_questions_json = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="documents")
@@ -67,6 +71,10 @@ class Document(Base):
             "risks_json": self.risks_json,
             "sources_json": self.sources_json,
             "clauses_json": self.clauses_json,
+            "doc_type": self.doc_type,
+            "risk_level": self.risk_level,
+            "risk_score": self.risk_score,
+            "suggested_questions_json": self.suggested_questions_json,
             "created_at": self.created_at.isoformat() if self.created_at else None
         }
 
@@ -90,3 +98,34 @@ class ActivityLog(Base):
             "details": self.details,
             "created_at": self.created_at.isoformat() if self.created_at else None
         }
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(String(128), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    document_id = Column(String(128), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    sender = Column(String(32), nullable=False)
+    text = Column(Text, nullable=False)
+    source = Column(String(512), nullable=True)
+    page = Column(String(64), nullable=True)
+    confidence = Column(String(128), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User")
+    document = relationship("Document")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "document_id": self.document_id,
+            "sender": self.sender,
+            "text": self.text,
+            "source": self.source,
+            "page": self.page,
+            "confidence": self.confidence,
+            "created_at": self.created_at.isoformat() if self.created_at else None
+        }
+

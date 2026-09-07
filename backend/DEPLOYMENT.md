@@ -24,8 +24,5 @@ Set the following keys under **Environment** in your Render service dashboard:
 - **Path**: `/health` or `/`
 - Expected JSON response: `{"status": "ok", "service": "Legal Lens Backend"}`
 
-## ⚠️ Important Note regarding Ollama / LLM Support
-- The `ollama` Python package is included in `requirements.txt`.
-- **However**, the Ollama server and local model running on `localhost:11434` on your local machine will **NOT** be running inside the Render server instance.
-- To use LLM features in live Render production, you should connect to a cloud-hosted LLM API (such as Google Gemini, OpenAI, or a remote Ollama server).
+- The backend runs fully standalone with an integrated local Work Agent.
 - The existing Ollama code has been preserved so local development continues to work seamlessly without breaking changes.

@@ -14,6 +14,19 @@ export default function SuggestedQuestions({
 }) {
   if (!suggestedQuestions || suggestedQuestions.length === 0) return null;
 
+  const normalizedQuestions = (suggestedQuestions || []).map((item, idx) => {
+    if (typeof item === 'object' && item !== null) {
+      return {
+        id: item.id || `sq-${idx}`,
+        question: item.question || item.text || String(item)
+      };
+    }
+    return {
+      id: `sq-${idx}`,
+      question: String(item)
+    };
+  });
+
   return (
     <section id="suggested-questions" className="mb-12">
       <div className="rounded-3xl bg-gradient-to-r from-white via-[#F0F4F8] to-white p-6 sm:p-8 border border-[#D2DBEB]/90 shadow-sm">
@@ -38,7 +51,7 @@ export default function SuggestedQuestions({
 
             {/* Clickable Question Cards */}
             <div className="space-y-2">
-              {suggestedQuestions.map((sq) => (
+              {normalizedQuestions.map((sq) => (
                 <button
                   key={sq.id}
                   onClick={() => onSelectQuestion(sq.question)}

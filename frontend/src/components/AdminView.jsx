@@ -132,7 +132,9 @@ export default function AdminView({ currentUser, onNavigateHome }) {
             <span className="px-3 py-1 bg-amber-100 text-amber-800 text-xs font-bold uppercase tracking-wider rounded-full border border-amber-200">
               Admin Privilege
             </span>
-            <span className="text-xs text-[#00385A] font-medium">Logged in as {currentUser.email}</span>
+            <span className="text-xs text-[#00385A] font-medium">
+              Logged in as <strong className="font-semibold text-[#01162B]">{currentUser.name || currentUser.email}</strong> ({currentUser.email}) &bull; Role: <span className="capitalize font-semibold text-[#01162B]">{currentUser.role || 'admin'}</span>
+            </span>
           </div>
           <h1 className="text-2xl lg:text-3xl font-extrabold text-[#01162B] tracking-tight mt-2">
             Legal Lens Admin Console

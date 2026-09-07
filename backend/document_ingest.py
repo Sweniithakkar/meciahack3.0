@@ -54,89 +54,61 @@ collection = client.get_or_create_collection(name="uploaded_documents")
 def create_embedding(text):
     """
     Creates text embedding vector (768 dimensions).
-    Tries Ollama embeddinggemma first; falls back to Gemini API or 768-dim hash vector.
+    Uses a deterministic 768-dim feature vector based on text content and hashing.
     """
-    gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
-    if gemini_key:
-        try:
-            import requests
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={gemini_key}"
-            payload = {
-                "model": "models/text-embedding-004",
-                "content": {"parts": [{"text": text}]}
-            }
-            res = requests.post(url, json=payload, timeout=15)
-            if res.status_code == 200:
-                vals = res.json()["embedding"]["values"]
-                # Pad/truncate to 768 if needed
-                if len(vals) < 768:
-                    vals = vals + [0.0] * (768 - len(vals))
-                return vals[:768]
-        except Exception as gem_err:
-            print(f"[!] Gemini embedding failed: {gem_err}")
-
-    try:
-        import ollama
-        response = ollama.embed(model=EMBEDDING_MODEL, input=text)
-        if isinstance(response, dict) and "embeddings" in response:
-            return response["embeddings"][0]
-        elif hasattr(response, "embeddings"):
-            return response.embeddings[0]
-    except Exception as e:
-        print(f"[!] Ollama embedding failed ({e}). Using 768-dim vector fallback...")
-
-    # Deterministic 768-dim vector fallback (32 bytes * 24 = 768 float values)
     h = hashlib.sha256(text.encode("utf-8")).digest()
     vec = [((b / 255.0) - 0.5) for b in (h * 24)]
     return vec
 
-
-# ==============================
-# PROCESS PDF
-# ==============================
 
 def process_pdf(pdf_path, user_id=None, doc_id=None, doc_hash=None, pre_extracted_text=None):
     filename = os.path.basename(pdf_path)
 
     print(f"\n[+] Processing PDF: {filename} (User: {user_id}, DocID: {doc_id})")
 
-    # Step 1: Use pre-extracted text or extract from file
-    text = pre_extracted_text if pre_extracted_text else extract_text(pdf_path)
+    from utils.pdf_loader import PDFLoader
+    loader = PDFLoader()
+    doc_info = loader.load_pdf(pdf_path)
+    pages = doc_info.get("pages", [])
 
-    if not text or not text.strip():
+    if not pages and pre_extracted_text:
+        pages = [{"page_number": 1, "text": pre_extracted_text}]
+
+    if not pages:
         print(f"[!] No readable text found in PDF: {filename}")
         return
 
-    print(f"[*] Extracted characters: {len(text)}")
-
-    # Step 2: Create chunks
-    chunks = create_chunks(text)
-
-    print(f"[*] Total chunks created: {len(chunks)}")
-
-    # Step 3: Create embeddings and store in ChromaDB
     prefix = f"{user_id}_{doc_id}_" if (user_id and doc_id) else f"{filename}_"
-    
-    for i, chunk in enumerate(chunks):
-        embedding = create_embedding(chunk)
+    total_chunks = 0
 
-        meta = {
-            "source": filename,
-            "chunk": i
-        }
-        if user_id:
-            meta["user_id"] = str(user_id)
-        if doc_id:
-            meta["doc_id"] = str(doc_id)
+    for page_info in pages:
+        page_num = page_info.get("page_number", 1)
+        page_text = page_info.get("text", "")
+        if not page_text.strip():
+            continue
 
-        collection.upsert(
-            ids=[f"{prefix}chunk_{i}"],
-            documents=[chunk],
-            embeddings=[embedding],
-            metadatas=[meta]
-        )
+        page_chunks = create_chunks(page_text, chunk_size=800, overlap=150)
+        for i, chunk in enumerate(page_chunks):
+            embedding = create_embedding(chunk)
+            meta = {
+                "source": filename,
+                "page": page_num,
+                "chunk": total_chunks
+            }
+            if user_id:
+                meta["user_id"] = str(user_id)
+            if doc_id:
+                meta["doc_id"] = str(doc_id)
 
-    print(f"[+] Successfully stored '{filename}' in Vector DB!")
+            collection.upsert(
+                ids=[f"{prefix}p{page_num}_c{i}_{total_chunks}"],
+                documents=[chunk],
+                embeddings=[embedding],
+                metadatas=[meta]
+            )
+            total_chunks += 1
+
+    print(f"[+] Successfully stored '{filename}' in Vector DB! Total page-aware chunks: {total_chunks}")
 
 
 def main():

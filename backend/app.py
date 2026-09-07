@@ -26,7 +26,8 @@ from utils.db import (
     create_document, get_user_documents, get_document_by_id,
     get_document_by_hash, delete_user_document, log_activity,
     get_user_activity_logs, get_admin_stats, get_all_users_admin,
-    get_all_activity_admin, get_all_documents_admin, get_user_details_admin
+    get_all_activity_admin, get_all_documents_admin, get_user_details_admin,
+    save_chat_message, get_chat_history, clear_chat_history
 )
 from utils.auth import (
     hash_password, verify_password, generate_token, login_required, admin_required
@@ -264,10 +265,14 @@ def list_user_documents():
             "uploadDate": doc["upload_date"],
             "status": doc["status"],
             "summary": doc["summary"],
+            "type": doc.get("doc_type") or "Legal Document",
+            "riskLevel": doc.get("risk_level") or "Medium",
+            "riskScore": doc.get("risk_score") or "Medium Risk",
             "checklist": json.loads(doc["checklist_json"]) if doc.get("checklist_json") else [],
             "risks": json.loads(doc["risks_json"]) if doc.get("risks_json") else [],
             "clauses": json.loads(doc["clauses_json"]) if doc.get("clauses_json") else [],
-            "sources": json.loads(doc["sources_json"]) if doc.get("sources_json") else []
+            "sources": json.loads(doc["sources_json"]) if doc.get("sources_json") else [],
+            "suggestedQuestions": json.loads(doc["suggested_questions_json"]) if doc.get("suggested_questions_json") else []
         })
 
     return jsonify({
@@ -295,10 +300,14 @@ def get_single_document(doc_id):
             "uploadDate": doc["upload_date"],
             "status": doc["status"],
             "summary": doc["summary"],
+            "type": doc.get("doc_type") or "Legal Document",
+            "riskLevel": doc.get("risk_level") or "Medium",
+            "riskScore": doc.get("risk_score") or "Medium Risk",
             "checklist": json.loads(doc["checklist_json"]) if doc.get("checklist_json") else [],
             "risks": json.loads(doc["risks_json"]) if doc.get("risks_json") else [],
             "clauses": json.loads(doc["clauses_json"]) if doc.get("clauses_json") else [],
-            "sources": json.loads(doc["sources_json"]) if doc.get("sources_json") else []
+            "sources": json.loads(doc["sources_json"]) if doc.get("sources_json") else [],
+            "suggestedQuestions": json.loads(doc["suggested_questions_json"]) if doc.get("suggested_questions_json") else []
         }
     })
 
@@ -398,11 +407,15 @@ def analyze_pdf():
         clauses_data = analysis_result.get("important_clauses", [])
         checklist_data = analysis_result.get("checklist", [])
         sources_data = analysis_result.get("sources", [])
+        doc_type = analysis_result.get("type", "Legal Document")
+        risk_level = analysis_result.get("riskLevel", "Medium")
+        risk_score = analysis_result.get("riskScore", "Medium Risk")
+        suggested_questions = analysis_result.get("suggestedQuestions", [])
 
         display_name = file.filename.replace(".pdf", "").replace(".PDF", "").replace("_", " ").title()
         upload_date_str = datetime.now().strftime("%b %d, %Y")
 
-        # Store in SQLite
+        # Store in Database
         db_doc = create_document(
             doc_id=doc_id,
             user_id=user_id,
@@ -417,7 +430,11 @@ def analyze_pdf():
             checklist_json=json.dumps(checklist_data),
             risks_json=json.dumps(risks_data),
             sources_json=json.dumps(sources_data),
-            clauses_json=json.dumps(clauses_data)
+            clauses_json=json.dumps(clauses_data),
+            doc_type=doc_type,
+            risk_level=risk_level,
+            risk_score=risk_score,
+            suggested_questions_json=json.dumps(suggested_questions)
         )
 
         log_activity(user_id, "DOCUMENT_ANALYZE", f"Analyzed document {doc_id} ({file.filename})")
@@ -437,6 +454,7 @@ def analyze_pdf():
             "risks": risks_data,
             "important_clauses": clauses_data,
             "checklist": checklist_data,
+            "suggestedQuestions": analysis_result.get("suggestedQuestions", []),
             "sources": sources_data
         })
 
@@ -491,6 +509,7 @@ def reanalyze_document_endpoint(doc_id):
             "risks": risks_data,
             "important_clauses": clauses_data,
             "checklist": checklist_data,
+            "suggestedQuestions": analysis_result.get("suggestedQuestions", []),
             "sources": sources_data
         })
     except Exception as e:
@@ -549,6 +568,88 @@ def ask_question():
     except Exception as e:
         print("❌ ERROR in /api/ask:", str(e))
         return jsonify({"error": "Unable to answer the question."}), 500
+
+
+# ==========================================
+# PROTECTED CHAT HISTORY PERSISTENCE
+# ==========================================
+
+@app.route("/api/documents/<doc_id>/chat", methods=["GET"])
+@login_required
+def get_doc_chat_history(doc_id):
+    try:
+        user_id = request.current_user["id"]
+        user_doc = get_document_by_id(doc_id, user_id)
+        if not user_doc:
+            return jsonify({"error": "Document not found or access denied"}), 403
+
+        history = get_chat_history(user_id, doc_id)
+        return jsonify({
+            "success": True,
+            "history": history
+        })
+    except Exception as e:
+        print("❌ Error fetching chat history:", str(e))
+        return jsonify({"error": "Failed to fetch chat history"}), 500
+
+
+@app.route("/api/documents/<doc_id>/chat", methods=["POST"])
+@login_required
+def save_doc_chat_message(doc_id):
+    try:
+        user_id = request.current_user["id"]
+        user_doc = get_document_by_id(doc_id, user_id)
+        if not user_doc:
+            return jsonify({"error": "Document not found or access denied"}), 403
+
+        data = request.get_json() or {}
+        sender = data.get("sender", "user")
+        text = data.get("text", "").strip()
+        source = data.get("source")
+        page = data.get("page")
+        confidence = data.get("confidence")
+        message_id = data.get("id")
+
+        if not text:
+            return jsonify({"error": "Message text is required"}), 400
+
+        saved_msg = save_chat_message(
+            user_id=user_id,
+            document_id=doc_id,
+            sender=sender,
+            text=text,
+            source=source,
+            page=page,
+            confidence=confidence,
+            message_id=message_id
+        )
+
+        return jsonify({
+            "success": True,
+            "message": saved_msg
+        })
+    except Exception as e:
+        print("❌ Error saving chat message:", str(e))
+        return jsonify({"error": "Failed to save chat message"}), 500
+
+
+@app.route("/api/documents/<doc_id>/chat", methods=["DELETE"])
+@login_required
+def clear_doc_chat_history(doc_id):
+    try:
+        user_id = request.current_user["id"]
+        user_doc = get_document_by_id(doc_id, user_id)
+        if not user_doc:
+            return jsonify({"error": "Document not found or access denied"}), 403
+
+        success = clear_chat_history(user_id, doc_id)
+        return jsonify({
+            "success": success
+        })
+    except Exception as e:
+        print("❌ Error clearing chat history:", str(e))
+        return jsonify({"error": "Failed to clear chat history"}), 500
+
 
 
 # ==========================================
@@ -642,5 +743,6 @@ if __name__ == "__main__":
     app.run(
         host="0.0.0.0",
         port=port,
-        debug=False
+        debug=False,
+        threaded=True
     )

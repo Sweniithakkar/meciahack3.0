@@ -22,7 +22,7 @@ import { SAMPLE_DOCUMENTS } from './data/mockData';
 export default function App() {
   // Auth state
   const [currentUser, setCurrentUser] = useState(() => apiService.getCurrentUser());
-  const [isVerifyingAuth, setIsVerifyingAuth] = useState(true);
+  const [isVerifyingAuth, setIsVerifyingAuth] = useState(() => !!apiService.getAuthToken());
 
   // Navigation & View State: 'home' | 'analysis' | 'my-documents' | 'admin'
   const [activeNav, setActiveNav] = useState(() => {
@@ -77,9 +77,19 @@ export default function App() {
 
   // Verify auth session on initial load
   useEffect(() => {
+    if (!apiService.getAuthToken()) {
+      setIsVerifyingAuth(false);
+      return;
+    }
+
     let isMounted = true;
+    const safetyTimer = setTimeout(() => {
+      if (isMounted) setIsVerifyingAuth(false);
+    }, 1200);
+
     apiService.verifyAuthServer().then((user) => {
       if (isMounted) {
+        clearTimeout(safetyTimer);
         setCurrentUser(user);
         setIsVerifyingAuth(false);
         const path = window.location.pathname;
@@ -94,9 +104,15 @@ export default function App() {
         }
       }
     }).catch(() => {
-      if (isMounted) setIsVerifyingAuth(false);
+      if (isMounted) {
+        clearTimeout(safetyTimer);
+        setIsVerifyingAuth(false);
+      }
     });
-    return () => { isMounted = false; };
+    return () => {
+      isMounted = false;
+      clearTimeout(safetyTimer);
+    };
   }, []);
 
   // Load user document history whenever currentUser changes
@@ -105,8 +121,11 @@ export default function App() {
       apiService.getDocumentsList().then((docs) => {
         setDocumentsList(docs);
         if (docs.length > 0) {
-          setCurrentDoc(docs[0]);
-          setCurrentDocId(docs[0].id);
+          const savedActiveDocId = localStorage.getItem(`legalLensActiveDoc_${currentUser.id}`);
+          const found = savedActiveDocId ? docs.find(d => d.id === savedActiveDocId) : null;
+          const targetDoc = found || docs[0];
+          setCurrentDoc(targetDoc);
+          setCurrentDocId(targetDoc.id);
           setHasUploadedDoc(true);
         } else {
           setCurrentDoc(null);
@@ -129,6 +148,9 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    if (currentUser?.id) {
+      localStorage.removeItem(`legalLensActiveDoc_${currentUser.id}`);
+    }
     apiService.logoutUser();
     setCurrentUser(null);
     setCurrentDoc(null);
@@ -145,6 +167,9 @@ export default function App() {
     if (doc) {
       setCurrentDoc(doc);
       setCurrentDocId(doc.id);
+      if (currentUser?.id) {
+        localStorage.setItem(`legalLensActiveDoc_${currentUser.id}`, doc.id);
+      }
       setHasUploadedDoc(true);
       setActiveNav('analysis');
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -166,6 +191,9 @@ export default function App() {
       setDocumentsList(updatedList);
       setCurrentDoc(newDoc);
       setCurrentDocId(newDoc.id);
+      if (currentUser?.id) {
+        localStorage.setItem(`legalLensActiveDoc_${currentUser.id}`, newDoc.id);
+      }
       setHasUploadedDoc(true);
       setIsProcessing(false);
       setActiveNav('analysis');
@@ -380,6 +408,7 @@ export default function App() {
                 {/* 5. Before You Sign (Continuous Interactive Checklist) */}
                 <BeforeYouSign
                   checklist={currentDoc?.checklist}
+                  suggestedQuestions={currentDoc?.suggestedQuestions}
                   onOpenChat={handleOpenChatWithQuestion}
                 />
 

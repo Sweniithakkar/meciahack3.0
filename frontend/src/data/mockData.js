@@ -515,6 +515,12 @@ export const SAMPLE_DOCUMENTS = [
         question: 'Does this NDA protect both parties equally?',
         answer: 'Yes, this is a reciprocal Mutual NDA that applies identical non-disclosure standards to both disclosing and receiving parties.',
         source: 'NDA Document · Clause 1.1, Page 1'
+      },
+      {
+        id: 'sq-n3',
+        question: 'What information is excluded from confidentiality obligations?',
+        answer: 'Under Clause 3.2 (Page 2), information already publicly known, independently developed, or lawfully received from third parties without restriction is excluded from confidentiality obligations.',
+        source: 'NDA Document · Clause 3.2, Page 2'
       }
     ]
   },
@@ -596,6 +602,18 @@ export const SAMPLE_DOCUMENTS = [
         question: 'What is the probation period and notice during probation?',
         answer: 'Clause 2.4 states probation is 6 months, during which either party can terminate with just 15 days written notice.',
         source: 'Offer Letter · Clause 2.4, Page 2'
+      },
+      {
+        id: 'sq-o2',
+        question: 'How does the ESOP stock option vesting schedule work?',
+        answer: 'Clause 4.2 outlines 2,000 ESOPs vesting over 48 months with a 12-month cliff (25% vesting after year 1, and monthly thereafter).',
+        source: 'Offer Letter · Clause 4.2, Page 3'
+      },
+      {
+        id: 'sq-o3',
+        question: 'What are the base salary and annual performance bonus terms?',
+        answer: 'Clause 3.1 provides ₹30,00,000 base salary per annum plus ₹5,00,000 discretionary annual performance bonus based on company milestones.',
+        source: 'Offer Letter · Clause 3.1, Page 2'
       }
     ]
   }

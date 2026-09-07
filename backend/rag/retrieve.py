@@ -53,46 +53,63 @@ except Exception:
 
 
 def get_query_embedding(query):
-    """Generates 768-dim embedding for query using Gemini API, Ollama, or hashing fallback."""
-    gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
-    if gemini_key:
-        try:
-            import requests
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={gemini_key}"
-            payload = {
-                "model": "models/text-embedding-004",
-                "content": {"parts": [{"text": query}]}
-            }
-            res = requests.post(url, json=payload, timeout=15)
-            if res.status_code == 200:
-                vals = res.json()["embedding"]["values"]
-                if len(vals) < 768:
-                    vals = vals + [0.0] * (768 - len(vals))
-                return vals[:768]
-        except Exception as gem_err:
-            print(f"[!] Gemini query embedding failed: {gem_err}")
-
-    try:
-        import ollama
-        response = ollama.embed(model=EMBEDDING_MODEL, input=query)
-        if isinstance(response, dict) and "embeddings" in response:
-            return response["embeddings"][0]
-        elif hasattr(response, "embeddings"):
-            return response.embeddings[0]
-    except Exception as e:
-        print(f"[!] Ollama query embedding failed ({e}). Using 768-dim fallback...")
-
-    # Fallback pseudo-vector matching 768 chunk dimensions
+    """Generates 768-dim embedding for query using deterministic hashing matching chunk dimensions."""
     h = hashlib.sha256(query.encode("utf-8")).digest()
     return [((b / 255.0) - 0.5) for b in (h * 24)]
 
 
-def retrieve_documents(query, n_results=3):
+def retrieve_documents(query, doc_id=None, user_id=None, n_results=5):
     """
     Converts query string into embedding and searches ChromaDB vector store.
+    Enforces strict doc_id and user_id filtering to isolate document context.
     """
     try:
         query_embedding = get_query_embedding(query)
+        
+        # Strict document-specific filter if doc_id is available
+        if doc_id:
+            try:
+                where_clause = {"doc_id": str(doc_id)}
+                if user_id:
+                    where_clause = {"$and": [{"doc_id": str(doc_id)}, {"user_id": str(user_id)}]}
+                
+                try:
+                    filtered_res = collection.query(
+                        query_embeddings=[query_embedding],
+                        n_results=n_results,
+                        where=where_clause
+                    )
+                except Exception:
+                    # Fallback to doc_id filter if $and operator fails
+                    filtered_res = collection.query(
+                        query_embeddings=[query_embedding],
+                        n_results=n_results,
+                        where={"doc_id": str(doc_id)}
+                    )
+
+                if filtered_res and "documents" in filtered_res and filtered_res["documents"] and filtered_res["documents"][0]:
+                    print(f"[RAG RETRIEVAL] Found {len(filtered_res['documents'][0])} isolated chunks strictly matching doc_id='{doc_id}'")
+                    return filtered_res
+                else:
+                    print(f"[RAG RETRIEVAL] Zero chunks found strictly matching doc_id='{doc_id}'. Preventing cross-document contamination.")
+                    return {"documents": [[]], "metadatas": [[]]}
+            except Exception as f_err:
+                print(f"[!] Filtered query for doc_id={doc_id} failed ({f_err}). Returning empty context to prevent context contamination.")
+                return {"documents": [[]], "metadatas": [[]]}
+
+        # If user_id is specified without doc_id
+        if user_id:
+            try:
+                user_res = collection.query(
+                    query_embeddings=[query_embedding],
+                    n_results=n_results,
+                    where={"user_id": str(user_id)}
+                )
+                if user_res and "documents" in user_res and user_res["documents"] and user_res["documents"][0]:
+                    return user_res
+            except Exception as u_err:
+                print(f"[!] User-filtered retrieval failed ({u_err}).")
+
         results = collection.query(
             query_embeddings=[query_embedding],
             n_results=n_results

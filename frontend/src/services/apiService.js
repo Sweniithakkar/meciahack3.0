@@ -103,10 +103,16 @@ class LegalLensAPIService {
     if (!token) return null;
 
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2500);
+
       const response = await fetch(`${RAG_CONFIG.API_BASE_URL}/auth/me`, {
         method: 'GET',
         headers: this.getAuthHeaders(),
+        signal: controller.signal
       });
+
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         this.logoutUser();
@@ -241,11 +247,9 @@ class LegalLensAPIService {
       checklist: checklist,
       beforeYouSign: beforeYouSign,
       sources: d.sources || [],
-      suggestedQuestions: [
-        'What is the notice period required?',
-        'What are the payment and penalty conditions?',
-        'What are the termination clauses?'
-      ]
+      suggestedQuestions: Array.isArray(d.suggestedQuestions) && d.suggestedQuestions.length > 0
+        ? d.suggestedQuestions
+        : (d.suggested_questions_json ? (typeof d.suggested_questions_json === 'string' ? JSON.parse(d.suggested_questions_json) : d.suggested_questions_json) : [])
     };
   }
 
@@ -281,8 +285,8 @@ class LegalLensAPIService {
     const stages = [
       { name: 'Uploading legal document to sandbox...', progress: 20 },
       { name: 'Extracting document text & page layout...', progress: 45 },
-      { name: 'Generating EmbeddingGemma vector representations...', progress: 65 },
-      { name: 'Performing grounded Ollama analysis...', progress: 85 },
+      { name: 'Generating vector representations...', progress: 65 },
+      { name: 'Performing grounded Legal Lens analysis...', progress: 85 },
       { name: 'Preparing plain-language analysis & checklist...', progress: 100 }
     ];
 
@@ -338,7 +342,8 @@ class LegalLensAPIService {
         risks: data.risks,
         important_clauses: data.important_clauses,
         checklist: data.checklist,
-        sources: data.sources
+        sources: data.sources,
+        suggestedQuestions: data.suggestedQuestions
       });
       formattedDoc.selectedLanguage = data.language || language;
 
@@ -450,7 +455,7 @@ class LegalLensAPIService {
         answer: data.answer || 'No answer available.',
         source: sourceStr,
         page: pageStr,
-        confidence: 'Grounded Ollama Answer',
+        confidence: 'Grounded Legal Lens AI',
         isMock: false,
         language: data.language || language
       };
@@ -528,6 +533,62 @@ class LegalLensAPIService {
       throw new Error(data.error || 'Failed to fetch user details.');
     }
     return data;
+  }
+
+  // ============================================================
+  // CHAT HISTORY APIs
+  // ============================================================
+
+  async getChatHistory(docId) {
+    if (!docId || !this.getAuthToken()) return [];
+    try {
+      const response = await fetch(`${RAG_CONFIG.API_BASE_URL}/documents/${docId}/chat`, {
+        method: 'GET',
+        headers: this.getAuthHeaders(),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        return Array.isArray(data.history) ? data.history : [];
+      }
+    } catch (e) {
+      console.warn('Failed to fetch chat history from server:', e);
+    }
+    return [];
+  }
+
+  async saveChatMessage(docId, message) {
+    if (!docId || !this.getAuthToken()) return null;
+    try {
+      const response = await fetch(`${RAG_CONFIG.API_BASE_URL}/documents/${docId}/chat`, {
+        method: 'POST',
+        headers: this.getAuthHeaders(true),
+        body: JSON.stringify(message),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        return data.message;
+      }
+    } catch (e) {
+      console.warn('Failed to save chat message to server:', e);
+    }
+    return null;
+  }
+
+  async clearChatHistory(docId) {
+    if (!docId || !this.getAuthToken()) return false;
+    try {
+      const response = await fetch(`${RAG_CONFIG.API_BASE_URL}/documents/${docId}/chat`, {
+        method: 'DELETE',
+        headers: this.getAuthHeaders(),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        return data.success;
+      }
+    } catch (e) {
+      console.warn('Failed to clear chat history on server:', e);
+    }
+    return false;
   }
 }
 

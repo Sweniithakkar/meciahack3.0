@@ -8,6 +8,7 @@ import confetti from 'canvas-confetti';
 
 export default function BeforeYouSign({
   checklist: initialChecklist,
+  suggestedQuestions,
   onOpenChat
 }) {
   const [items, setItems] = useState([]);
@@ -166,35 +167,28 @@ export default function BeforeYouSign({
       </div>
 
       {/* Questions You May Want to Ask Box with Illustration */}
-      <div className="rounded-2xl bg-[#F4F8FC] border border-[#DCE7F3] p-6 flex flex-col md:flex-row items-center justify-between gap-6 mb-6 shadow-2xs">
-        <div className="flex-1">
-          <h4 className="text-sm font-bold text-[#01162B] mb-3">
-            Questions You May Want to Ask
-          </h4>
-          <ul className="space-y-2 text-xs text-[#01162B]">
-            <li
-              onClick={() => onOpenChat && onOpenChat('Can the notice period be reduced?')}
-              className="flex items-center gap-2 hover:text-[#2563EB] cursor-pointer transition-colors"
-            >
-              <span className="h-1.5 w-1.5 rounded-full bg-[#01162B]" />
-              <span>Can the notice period be reduced?</span>
-            </li>
-            <li
-              onClick={() => onOpenChat && onOpenChat('When does the penalty apply?')}
-              className="flex items-center gap-2 hover:text-[#2563EB] cursor-pointer transition-colors"
-            >
-              <span className="h-1.5 w-1.5 rounded-full bg-[#01162B]" />
-              <span>When does the penalty apply?</span>
-            </li>
-            <li
-              onClick={() => onOpenChat && onOpenChat('What happens if I leave before the bond period?')}
-              className="flex items-center gap-2 hover:text-[#2563EB] cursor-pointer transition-colors"
-            >
-              <span className="h-1.5 w-1.5 rounded-full bg-[#01162B]" />
-              <span>What happens if I leave before the bond period?</span>
-            </li>
-          </ul>
-        </div>
+      {suggestedQuestions && suggestedQuestions.length > 0 && (
+        <div className="rounded-2xl bg-[#F4F8FC] border border-[#DCE7F3] p-6 flex flex-col md:flex-row items-center justify-between gap-6 mb-6 shadow-2xs">
+          <div className="flex-1">
+            <h4 className="text-sm font-bold text-[#01162B] mb-3">
+              Questions You May Want to Ask
+            </h4>
+            <ul className="space-y-2 text-xs text-[#01162B]">
+              {suggestedQuestions.slice(0, 3).map((sq, idx) => {
+                const qText = typeof sq === 'object' ? (sq.question || sq.text || String(sq)) : String(sq);
+                return (
+                  <li
+                    key={idx}
+                    onClick={() => onOpenChat && onOpenChat(qText)}
+                    className="flex items-center gap-2 hover:text-[#2563EB] cursor-pointer transition-colors"
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#01162B]" />
+                    <span>{qText}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
 
         {/* Clipboard & Pen Illustration SVG */}
         <div className="shrink-0 flex items-center justify-center w-28 h-28">
@@ -216,6 +210,7 @@ export default function BeforeYouSign({
           </svg>
         </div>
       </div>
+      )}
 
       {/* Centered Legal Disclaimer matching screenshot */}
       <p className="text-[11px] text-center text-[#94A2BF] leading-relaxed max-w-xl mx-auto">

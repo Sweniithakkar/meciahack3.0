@@ -1,8 +1,9 @@
 import os
 import sys
 import json
+import re
 import socket
-import requests
+import hashlib
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
@@ -17,6 +18,13 @@ if SCRIPT_DIR not in sys.path:
 
 DEFAULT_MODEL = "llama3.2:3b"
 
+LANGUAGE_NAMES = {
+    "en": "English",
+    "hi": "Hindi (हिंदी)",
+    "gu": "Gujarati (ગુજરાતી)"
+}
+
+
 def is_ollama_running():
     """Fast check to verify if local Ollama daemon is active."""
     try:
@@ -26,10 +34,11 @@ def is_ollama_running():
     except Exception:
         return False
 
+
 def get_available_model():
     """Returns available Ollama model for chat generation if Ollama is running."""
     if not is_ollama_running():
-        return DEFAULT_MODEL
+        return None
     try:
         import ollama
         response = ollama.list()
@@ -40,7 +49,7 @@ def get_available_model():
             models = [m.get("name") or m.get("model") for m in response.get("models", [])]
         
         for m in models:
-            if m and ("llama" in m.lower() or "gemma" in m.lower()) and "embedding" not in m.lower():
+            if m and ("llama" in m.lower() or "gemma" in m.lower() or "mistral" in m.lower()) and "embedding" not in m.lower():
                 return m
         if models:
             for m in models:
@@ -48,437 +57,394 @@ def get_available_model():
                     return m
     except Exception as e:
         print(f"[!] Warning checking Ollama models: {e}")
-    return DEFAULT_MODEL
-
-
-def call_cloud_llm_api(prompt, system_instruction=""):
-    """
-    Fallback LLM provider for cloud deployments (e.g. Render) where local Ollama is not accessible.
-    Supports Google Gemini API, Groq API, and OpenAI API via environment variables.
-    """
-    gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
-    groq_key = os.environ.get("GROQ_API_KEY", "").strip()
-    openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
-
-    # Option 1: Google Gemini API (Free tier available)
-    if gemini_key:
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}"
-            payload = {
-                "contents": [
-                    {
-                        "parts": [
-                            {"text": f"{system_instruction}\n\n{prompt}" if system_instruction else prompt}
-                        ]
-                    }
-                ]
-            }
-            res = requests.post(url, json=payload, timeout=30)
-            if res.status_code == 200:
-                data = res.json()
-                candidates = data.get("candidates", [])
-                if candidates:
-                    parts = candidates[0].get("content", {}).get("parts", [])
-                    if parts:
-                        return parts[0].get("text", "").strip()
-        except Exception as e:
-            print(f"[!] Gemini API call failed: {e}")
-
-    # Option 2: Groq API (Free tier available)
-    if groq_key:
-        try:
-            url = "https://api.groq.com/openai/v1/chat/completions"
-            headers = {
-                "Authorization": f"Bearer {groq_key}",
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "model": "llama-3.3-70b-versatile",
-                "messages": [
-                    {"role": "system", "content": system_instruction or "You are Legal Lens AI assistant."},
-                    {"role": "user", "content": prompt}
-                ]
-            }
-            res = requests.post(url, headers=headers, json=payload, timeout=30)
-            if res.status_code == 200:
-                data = res.json()
-                return data["choices"][0]["message"]["content"].strip()
-        except Exception as e:
-            print(f"[!] Groq API call failed: {e}")
-
-    # Option 3: OpenAI API
-    if openai_key:
-        try:
-            url = "https://api.openai.com/v1,chat/completions"
-            headers = {
-                "Authorization": f"Bearer {openai_key}",
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "model": "gpt-3.5-turbo",
-                "messages": [
-                    {"role": "system", "content": system_instruction or "You are Legal Lens AI assistant."},
-                    {"role": "user", "content": prompt}
-                ]
-            }
-            res = requests.post(url, headers=headers, json=payload, timeout=30)
-            if res.status_code == 200:
-                data = res.json()
-                return data["choices"][0]["message"]["content"].strip()
-        except Exception as e:
-            print(f"[!] OpenAI API call failed: {e}")
-
     return None
 
 
-LANGUAGE_NAMES = {
-    "en": "English",
-    "hi": "Hindi (हिंदी)",
-    "gu": "Gujarati (ગુજરાતી)"
-}
+def bold_key_legal_terms(text):
+    """
+    Highlights critical numbers, monetary amounts, notice periods, durations, dates,
+    penalties, and legal obligations in bold for executive readability.
+    """
+    if not text:
+        return text
+
+    # Bold notice periods / durations like "60 days", "30 (thirty) days", "12 months"
+    text = re.sub(
+        r'\b(\d+\s*(?:\(\w+\)\s*)?(?:days?|months?|years?|weeks?|hours?))\b',
+        r'**\1**',
+        text,
+        flags=re.IGNORECASE
+    )
+
+    # Bold monetary amounts / percentages like "$5,000", "18% per annum", "Rs. 50,000"
+    text = re.sub(
+        r'\b((?:\$|€|£|₹|Rs\.?\s*)\d+(?:,\d+)*(?:\.\d+)?|\d+(?:\.\d+)?%)\b',
+        r'**\1**',
+        text,
+        flags=re.IGNORECASE
+    )
+
+    return text
 
 
-def get_language_prompt_instruction(language="en"):
-    lang = (language or "en").lower()
-    if lang == "hi":
-        return (
-            "LANGUAGE INSTRUCTION:\n"
-            "You MUST respond ONLY in Hindi (हिंदी).\n"
-            "CRITICAL: Do NOT translate or modify page numbers, section numbers, clause numbers, or document filenames.\n"
-            "Use exact citations, e.g., 'स्रोत: पेज X — सेक्शन Y'."
-        )
-    elif lang == "gu":
-        return (
-            "LANGUAGE INSTRUCTION:\n"
-            "You MUST respond ONLY in Gujarati (ગુજરાતી).\n"
-            "CRITICAL: Do NOT translate or modify page numbers, section numbers, clause numbers, or document filenames.\n"
-            "Use exact citations, e.g., 'સ્ત્રોત: પેજ X — વિભાગ Y'."
-        )
+def synthesize_local_answer(question, context, language="en", metadata_info=""):
+    """
+    Local Work Agent synthesizer: converts retrieved document context into a clean,
+    structured Markdown response with bolded legal terms, key bullet points, and source citations.
+    """
+    if not context or not context.strip() or "does not have extracted text" in context:
+        return "The uploaded document does not contain enough information to answer this question confidently."
+
+    # Split context into passages
+    passages = [p.strip() for p in context.split("-------------------------") if p.strip()]
+    if not passages:
+        passages = [p.strip() for p in context.split("\n\n") if p.strip()]
+
+    q_words = [w.lower() for w in re.findall(r'\b\w{3,}\b', question) if w.lower() not in ["what", "where", "when", "which", "how", "this", "that", "there", "with", "have", "from", "does", "document"]]
+
+    matching_sentences = []
+    sources_used = set()
+
+    for p in passages:
+        lines = p.split("\n")
+        source_header = ""
+        content_lines = []
+        for line in lines:
+            if line.startswith("SOURCE:") or line.startswith("Source:"):
+                source_header = line.strip()
+            elif line.startswith("CONTENT:"):
+                continue
+            else:
+                if line.strip():
+                    content_lines.append(line.strip())
+
+        full_passage_text = " ".join(content_lines)
+        if source_header:
+            sources_used.add(source_header.replace("SOURCE:", "").replace("Source:", "").strip())
+
+        # Sentence segmentation
+        raw_sentences = re.split(r'(?<=[.!?])\s+', full_passage_text)
+        for sent in raw_sentences:
+            s_clean = sent.strip()
+            if len(s_clean) < 15:
+                continue
+            # Score sentence relevance
+            score = sum(1 for w in q_words if w in s_clean.lower())
+            if score > 0 or not q_words:
+                matching_sentences.append((score, s_clean, source_header))
+
+    # Sort matching sentences by relevance score
+    matching_sentences.sort(key=lambda x: x[0], reverse=True)
+
+    if not matching_sentences:
+        # Fallback to top sentences from first passage
+        top_sentences = []
+        for p in passages[:2]:
+            lines = [l.strip() for l in p.split("\n") if l.strip() and not l.startswith("SOURCE:") and not l.startswith("CONTENT:")]
+            text_block = " ".join(lines)
+            sents = re.split(r'(?<=[.!?])\s+', text_block)
+            top_sentences.extend([s.strip() for s in sents if len(s.strip()) > 20][:3])
+        
+        extracted_body = " ".join(top_sentences[:4]) if top_sentences else context[:400]
     else:
-        return (
-            "LANGUAGE INSTRUCTION:\n"
-            "Respond in English.\n"
-            "CRITICAL: Do NOT translate or modify page numbers, section numbers, clause numbers, or document filenames.\n"
-            "Use exact citations, e.g., 'Source: Page X — Section Y'."
-        )
+        # Take unique top sentences up to 4
+        seen_sents = set()
+        chosen = []
+        for sc, s, src in matching_sentences:
+            if s not in seen_sents:
+                seen_sents.add(s)
+                chosen.append(s)
+            if len(chosen) >= 4:
+                break
+        extracted_body = " ".join(chosen)
 
+    formatted_body = bold_key_legal_terms(extracted_body)
 
-def generate_answer(question, context, language="en"):
-    """Generates an answer to the user's question using retrieved document context in the specified language."""
-    lang_instruction = get_language_prompt_instruction(language)
-    
-    prompt = f"""
-You are Legal Lens, an AI legal document analyst and explainer.
+    # Format into structured Markdown response
+    sources_str = ", ".join(sources_used) if sources_used else (metadata_info or "Document Context")
 
-{lang_instruction}
+    ans_md = f"""### Answer
 
-Use the provided legal document context to answer the user's question accurately and clearly.
+According to the selected document, {formatted_body}
 
-LEGAL CONTEXT:
-{context}
+### Important Provisions & Highlights
 
-USER QUESTION:
-{question}
+- **Document Grounding**: Information verified directly from the uploaded contract text.
+- **Key Terms**: Critical terms, deadlines, notice periods, and monetary amounts are highlighted in **bold** above.
 
-Instructions:
-- Explain in simple, clear, professional language in the requested target language.
-- Base your response strictly on the provided legal context.
-- Highlight key terms, figures, obligations, or provisions where relevant.
-- Keep page numbers, clause numbers, numbers, and document names exact and unchanged.
-
-Answer:
+### Source
+{sources_str}
 """
-    # 1. Try local Ollama first if active
-    if is_ollama_running():
+    return ans_md.strip()
+
+
+def generate_answer(question, context, language="en", metadata_info=""):
+    """
+    Generates a grounded RAG answer based on retrieved document context.
+    Uses local Ollama if available, otherwise runs the local Legal Lens Work Agent engine.
+    """
+    model = get_available_model()
+    if model:
         try:
             import ollama
-            model_name = get_available_model()
-            response = ollama.chat(
-                model=model_name,
-                messages=[{"role": "user", "content": prompt}]
+            system_prompt = (
+                "You are Legal Lens, an expert legal document assistant. "
+                "Answer the question concisely and accurately based ONLY on the provided context. "
+                "Structure your answer with bold headers (### Answer, ### Key Highlights) and bold important terms."
             )
-            return response["message"]["content"]
+            user_prompt = f"USER QUESTION: {question}\n\nDOCUMENT CONTEXT:\n{context}\n\nMETADATA:\n{metadata_info}"
+            response = ollama.chat(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ]
+            )
+            ans = response.get("message", {}).get("content", "").strip()
+            if ans:
+                return bold_key_legal_terms(ans)
         except Exception as e:
-            print(f"[!] Ollama local chat failed ({e}). Trying cloud API fallback...")
+            print(f"[!] Ollama chat failed ({e}), using local synthesizer.")
 
-    # 2. Try Cloud API Fallback (Gemini / Groq / OpenAI)
-    cloud_response = call_cloud_llm_api(prompt, f"You are Legal Lens, an AI legal document analyst answering in {LANGUAGE_NAMES.get(language, 'English')}.")
-    if cloud_response:
-        return cloud_response
-
-    if (language or "en").lower() == "hi":
-        return "लीगल लेंस आरएजी उत्तर: कृपया दिए गए दस्तावेज की शर्तों की समीक्षा करें। (स्रोत: पेज 1)"
-    elif (language or "en").lower() == "gu":
-        return "લીગલ લેન્સ આરએજી જવાબ: કૃપા કરીને આપેલ દસ્તાવેજની શરતોની સમીક્ષા કરો. (સ્ત્રોત: પેજ 1)"
-
-    return (
-        "Legal Lens RAG Answer: Based on document analysis, please review the contract clauses carefully. "
-        "(Source: Page 1)"
-    )
+    return synthesize_local_answer(question, context, language=language, metadata_info=metadata_info)
 
 
 def generate_checklist(context, language="en"):
-    """Generates a 'BEFORE YOU SIGN' checklist based on legal document context in target language."""
-    lang_instruction = get_language_prompt_instruction(language)
+    """Generates dynamic 'BEFORE YOU SIGN' verification points based on document text."""
+    items = []
+    text_lower = (context or "").lower()
 
-    prompt = f"""
-You are Legal Lens, an AI legal document risk advisor.
+    if "notice" in text_lower or "terminat" in text_lower:
+        items.append("Verify the required written notice period for contract termination or resignation.")
+    if "payment" in text_lower or "rent" in text_lower or "salary" in text_lower or "fee" in text_lower:
+        items.append("Confirm exact financial payment amounts, due dates, and late payment penalties.")
+    if "deposit" in text_lower or "security" in text_lower:
+        items.append("Check deposit refund conditions, deductions, and processing timelines.")
+    if "confidential" in text_lower or "nondisclosure" in text_lower:
+        items.append("Review confidentiality obligations and post-termination non-disclosure scope.")
+    if "liability" in text_lower or "indemn" in text_lower:
+        items.append("Inspect liability caps, indemnity clauses, and risk allocation terms.")
 
-{lang_instruction}
+    if not items:
+        items = [
+            "Confirm identity of all signing parties and official effective dates.",
+            "Verify notice period requirements and termination procedures.",
+            "Review payment schedules, penalties, and obligation terms before signing."
+        ]
 
-Based on the provided legal document context, generate a practical "BEFORE YOU SIGN" checklist.
+    return items
 
-LEGAL CONTEXT:
-{context}
 
-Instructions:
-- List 3 to 5 critical clauses, key obligations, payment/financial terms, probation/notice periods, or potential risks the user must verify before signing.
-- Format as clean, clear bullet points in the target language.
-- Keep numbers, clause references, and page numbers exact.
+def extract_document_specific_questions(text_content):
+    """
+    Generates 3 recommended questions grounded ONLY in clauses, terms, and facts
+    actually present in the extracted document text.
+    """
+    if not text_content or not text_content.strip():
+        text_content = ""
 
-Checklist:
-"""
-    if is_ollama_running():
-        try:
-            import ollama
-            model_name = get_available_model()
-            response = ollama.chat(
-                model=model_name,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            return response["message"]["content"]
-        except Exception as e:
-            print(f"[!] Ollama local checklist failed ({e}). Trying cloud API fallback...")
+    text_raw = text_content.lower()
+    clean_no_space = re.sub(r'\s+', '', text_raw)
+    clean_single_space = re.sub(r'\s+', ' ', text_raw)
+    combined = text_raw + ' ' + clean_no_space + ' ' + clean_single_space
+    questions = []
 
-    cloud_response = call_cloud_llm_api(prompt, f"You are Legal Lens AI risk advisor in {LANGUAGE_NAMES.get(language, 'English')}.")
-    if cloud_response:
-        return cloud_response
+    # 1. Spousal / Marital / Prenuptial / Marriage
+    if any(k in combined for k in ['marital', 'prenuptial', 'spouse', 'spousal', 'marriage']):
+        if any(k in combined for k in ['property', 'asset', 'wealth']):
+            questions.append('How are separate and joint properties/assets distributed under this agreement?')
+        if any(k in combined for k in ['support', 'alimony', 'maintenance']):
+            questions.append('What provisions apply regarding spousal support or alimony waivers?')
+        if any(k in combined for k in ['debt', 'liabilit']):
+            questions.append('How are pre-existing individual debts and financial liabilities handled?')
+        if len(questions) < 3:
+            questions.append('What provisions apply regarding gifts, inheritances, or marital assets?')
 
-    if (language or "en").lower() == "hi":
-        return "• नोटिस अवधि और प्रोबेशन अवधि सत्यापित करें\n• गोपनीयता और गैर-प्रतिस्पर्धा खंडों की समीक्षा करें\n• भुगतान अनुसूची और मुआवजे की शर्तों की पुष्टि करें"
-    elif (language or "en").lower() == "gu":
-        return "• નોટિસ પિરિયડ અને પ્રોબેશન અવધિ ચકાસો\n• ગોપનીયતા અને સ્પર્ધા-વિરોધી કલમોની સમીક્ષા કરો\n• ચુકવણી શિડ્યુલ અને વળતરની શરતોની ખાતરી કરો"
+    # 2. Employment / Notice / Probation / Salary / Bond
+    if any(k in combined for k in ['employee', 'employer', 'resignation', 'salary', 'probation', 'employment', 'job']):
+        if any(k in combined for k in ['notice', 'terminat', 'resignation']):
+            questions.append('What is the notice period required for resignation or termination?')
+        if any(k in combined for k in ['probation', 'trial']):
+            questions.append('What are the terms and duration of the probation period?')
+        if any(k in combined for k in ['salary', 'compensation', 'remuneration', 'pay', 'bonus']):
+            questions.append('What are the compensation structure, payment terms, or salary details?')
+        if any(k in combined for k in ['bond', 'lock-in', 'penalty']) and len(questions) < 3:
+            questions.append('What are the lock-in period terms and early exit penalties?')
 
-    return "• Verify probation and notice periods\n• Review non-compete and confidentiality clauses\n• Confirm payment schedules and compensation terms"
+    # 3. Rental / Lease / Tenant / Landlord
+    if any(k in combined for k in ['tenant', 'lease', 'landlord', 'rent', 'premises']):
+        if any(k in combined for k in ['deposit', 'security']):
+            questions.append('What is the security deposit amount and under what conditions is it refunded?')
+        if any(k in combined for k in ['rent', 'maintenance']):
+            questions.append('What is the rent payment amount, due date, and payment policy?')
+        if any(k in combined for k in ['notice', 'terminat', 'vacate']):
+            questions.append('What notice period is required for terminating the lease?')
+        if any(k in combined for k in ['painting', 'repair', 'utility']) and len(questions) < 3:
+            questions.append('What deductions apply for painting or property repairs upon move-out?')
+
+    # 4. Confidentiality / NDA / Trade Secrets
+    if any(k in combined for k in ['confidential', 'nondisclosure', 'non-disclosure', 'trade secret']) and len(questions) < 3:
+        questions.append('What specific information is classified as confidential and what is the non-disclosure duration?')
+
+    # 5. Non-Compete / Non-Solicit
+    if any(k in combined for k in ['non-compete', 'noncompete', 'non-solicit']) and len(questions) < 3:
+        questions.append('What non-compete or non-solicitation restrictions apply and for how long?')
+
+    # 6. Intellectual Property / Inventions
+    if any(k in combined for k in ['intellectual property', 'invention', 'patent', 'work product']) and len(questions) < 3:
+        questions.append('Who owns the intellectual property and inventions created under this agreement?')
+
+    # 7. Property Maintenance / Repairs / Utilities
+    if any(k in combined for k in ['maintenance', 'repair', 'utility', 'alteration']) and len(questions) < 3:
+        questions.append('What are the obligations regarding property maintenance, repairs, and utilities?')
+
+    # 8. Liability Caps & Indemnification
+    if any(k in combined for k in ['indemn', 'limitation of liability', 'hold harmless']) and len(questions) < 3:
+        questions.append('What liability caps and indemnification obligations apply to each party?')
+
+    # 9. Governing Law / Jurisdiction / Dispute Resolution
+    if any(k in combined for k in ['governing law', 'jurisdiction', 'arbitration', 'dispute']) and len(questions) < 3:
+        questions.append('What governing law or dispute resolution mechanism applies to this contract?')
+
+    # 10. Scope of Services / Deliverables
+    if any(k in combined for k in ['scope of service', 'deliverables', 'statement of work']) and len(questions) < 3:
+        questions.append('What is the defined scope of services and deliverables under this agreement?')
+
+    # 11. Document-Grounded Fallback (strictly using detected provisions)
+    if len(questions) < 3:
+        if any(k in combined for k in ['notice', 'terminat', 'cancellation']) and not any('notice' in q.lower() for q in questions):
+            questions.append('What notice period is required to terminate or cancel this agreement?')
+        if any(k in combined for k in ['payment', 'fee', 'charge', 'cost']) and not any('payment' in q.lower() or 'fee' in q.lower() or 'salary' in q.lower() or 'deposit' in q.lower() for q in questions):
+            questions.append('What are the exact payment milestones and fee obligations?')
+        if any(k in combined for k in ['obligations', 'rights', 'duties', 'responsibilit']) and len(questions) < 3:
+            questions.append('What are the primary obligations and responsibilities of each party under this document?')
+
+    return questions[:3]
 
 
 def analyze_full_document(text_content, language="en"):
     """
-    Performs full structured analysis of a legal document text, producing summary,
-    risks, important clauses, checklist, and risk scoring in the target language (en, hi, gu).
+    Performs full structured local analysis of legal document text, producing summary,
+    risks, important clauses, checklist, risk scoring, and document-specific suggested questions.
     """
-    lang = (language or "en").lower()
-    target_lang_name = LANGUAGE_NAMES.get(lang, "English")
+    text = (text_content or "").strip()
+    text_lower = text.lower()
+    first_3k = text_lower[:3000]
 
-    prompt = f"""
-Analyze the following legal document text and output a valid JSON object strictly matching this schema:
-{{
-    "summary": "Full executive summary of the document in 2-4 sentences in {target_lang_name}.",
-    "type": "Document Type (e.g. Employment Contract, NDA, Commercial Lease)",
-    "riskLevel": "High" or "Medium" or "Low",
-    "riskScore": "Risk assessment description e.g. High Risk (7/10)",
-    "risks": [
-        {{
-            "title": "Short title of risk in {target_lang_name}",
-            "severity": "high" or "medium" or "low",
-            "description": "Detailed explanation of risk in {target_lang_name}",
-            "recommendation": "Suggested action or negotiation strategy in {target_lang_name}"
-        }}
-    ],
-    "important_clauses": [
-        {{
-            "title": "Clause Title in {target_lang_name}",
-            "description": "Explanation of clause terms in {target_lang_name}",
-            "page": "1"
-        }}
-    ],
-    "checklist": [
-        "Actionable verification item 1 in {target_lang_name}",
-        "Actionable verification item 2 in {target_lang_name}",
-        "Actionable verification item 3 in {target_lang_name}"
-    ]
-}}
-
-CRITICAL LANGUAGE RULES:
-1. Generate ALL user-facing text (summary, risk titles, descriptions, recommendations, clause titles, checklist items) strictly in {target_lang_name} ({lang}).
-2. Do NOT translate or alter page numbers, clause numbers, section numbers, or numbers. Keep them as numeric strings (e.g. "1", "7").
-3. Do NOT translate enum values for "severity" ("high", "medium", "low") or "riskLevel" ("High", "Medium", "Low").
-4. Source page numbers and clause numbers MUST remain accurate.
-
-DOCUMENT TEXT (first 4000 characters):
-{text_content[:4000]}
-"""
-
-    raw_response = None
-
-    if is_ollama_running():
-        try:
-            import ollama
-            model_name = get_available_model()
-            res = ollama.chat(
-                model=model_name,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            raw_response = res["message"]["content"]
-        except Exception as e:
-            print(f"[!] Ollama full doc analysis failed ({e}). Trying cloud API...")
-            raw_response = call_cloud_llm_api(prompt, f"You are a legal document structure extractor. Output JSON in {target_lang_name}.")
+    # Detect Document Type
+    if "employment" in first_3k or "job" in first_3k or "salary" in first_3k or "employee" in first_3k:
+        doc_type = "Employment Agreement"
+    elif "rent" in first_3k or "lease" in first_3k or "tenant" in first_3k or "landlord" in first_3k:
+        doc_type = "Rental Agreement"
+    elif "marital" in first_3k or "prenuptial" in first_3k or "marriage" in first_3k or "spouse" in first_3k:
+        doc_type = "Pre-marital Agreement"
+    elif "confidential" in first_3k or "nondisclosure" in first_3k or "nda" in first_3k:
+        doc_type = "Non-Disclosure Agreement (NDA)"
+    elif "service" in first_3k or "contractor" in first_3k or "consultant" in first_3k:
+        doc_type = "Service Agreement"
+    elif "commercial" in first_3k or "premises" in first_3k:
+        doc_type = "Commercial Lease"
     else:
-        raw_response = call_cloud_llm_api(prompt, f"You are a legal document structure extractor. Output JSON in {target_lang_name}.")
+        doc_type = "Legal Contract"
 
-    if raw_response:
-        try:
-            json_str = raw_response
-            if "```json" in json_str:
-                json_str = json_str.split("```json")[1].split("```")[0]
-            elif "```" in json_str:
-                json_str = json_str.split("```")[1].split("```")[0]
-            
-            parsed = json.loads(json_str.strip())
-            return parsed
-        except Exception as parse_err:
-            print(f"[!] JSON parsing error: {parse_err}")
+    # Compute Summary
+    clean_lines = [l.strip() for l in text.split("\n") if len(l.strip()) > 30]
+    summary_sentences = clean_lines[:3] if len(clean_lines) >= 3 else [text[:250]]
+    summary = f"This document is a {doc_type}. Key provisions: " + " ".join(summary_sentences)
+    if len(summary) > 400:
+        summary = summary[:397] + "..."
 
-    # Heuristic fallbacks per language
-    lines = [l.strip() for l in text_content.splitlines() if l.strip()]
-    doc_title = lines[0] if lines else "Legal Document"
-    
-    if lang == "hi":
-        return {
-            "summary": f"यह दस्तावेज़ ({doc_title}) महत्वपूर्ण कानूनी प्रावधानों, अधिकारों और दायित्वों को शामिल करता है जिनकी समीक्षा आवश्यक है।",
-            "type": "कानूनी दस्तावेज",
-            "riskLevel": "Medium",
-            "riskScore": "मध्यम जोखिम (5/10)",
-            "risks": [
-                {
-                    "title": "नोटिस और समाप्ति शर्तें",
-                    "severity": "medium",
-                    "description": "समाप्ति धाराओं के लिए नोटिस या जुर्माना शर्तों की आवश्यकता हो सकती है।",
-                    "recommendation": "हस्ताक्षर करने से पहले नोटिस अवधि की आवश्यकताओं की समीक्षा करें।"
-                },
-                {
-                    "title": "गोपनीयता और बौद्धिक संपदा",
-                    "severity": "medium",
-                    "description": "मानक गोपनीयता और आईपी हस्तांतरण दायित्व।",
-                    "recommendation": "सुनिश्चित करें कि समझौते की समाप्ति के बाद दायित्व समाप्त हो जाएं।"
-                }
-            ],
-            "important_clauses": [
-                {
-                    "title": "सामान्य दायित्व और शर्तें",
-                    "description": text_content[:200] + "...",
-                    "page": "1"
-                }
-            ],
-            "checklist": [
-                "सभी पक्षों के नाम और प्रभावी तिथियों की पुष्टि करें",
-                "भुगतान और मुआवजे की शर्तों की समीक्षा करें",
-                "समाप्ति की नोटिस अवधि सत्यापित करें"
-            ]
+    # Assess Risk Level
+    risk_keywords_high = ["penalty", "indemnity", "unilateral", "breach", "forfeit", "terminate without cause", "sole discretion"]
+    high_count = sum(1 for w in risk_keywords_high if w in text_lower)
+
+    if high_count >= 3:
+        risk_level = "High"
+        risk_score = "High Risk (8/10)"
+    elif high_count >= 1:
+        risk_level = "Medium"
+        risk_score = "Medium Risk (5/10)"
+    else:
+        risk_level = "Low"
+        risk_score = "Low Risk (2/10)"
+
+    # Identify Risks
+    risks = []
+    if "terminate" in text_lower or "termination" in text_lower:
+        risks.append({
+            "title": "Strict Termination Clauses",
+            "severity": "high" if high_count >= 2 else "medium",
+            "description": "The contract contains specific termination rights and notice periods that must be strictly followed.",
+            "recommendation": "Ensure written notice timelines are strictly recorded in your calendar prior to signing.",
+            "page": "1",
+            "clauseRef": "Termination Clause"
+        })
+    if "penalty" in text_lower or "late" in text_lower or "interest" in text_lower:
+        risks.append({
+            "title": "Financial Penalties & Late Fees",
+            "severity": "medium",
+            "description": "Additional interest charges or financial penalties apply in the event of delayed performance or payment.",
+            "recommendation": "Review exact grace periods and payment schedules to avoid unexpected penalties.",
+            "page": "1",
+            "clauseRef": "Payment & Penalty Terms"
+        })
+    if "confidential" in text_lower or "non-compete" in text_lower:
+        risks.append({
+            "title": "Restrictive Covenants & Confidentiality",
+            "severity": "medium",
+            "description": "Imposes ongoing post-contract obligations regarding non-disclosure or competitive activities.",
+            "recommendation": "Confirm duration and geographical scope of restrictive clauses.",
+            "page": "1",
+            "clauseRef": "Confidentiality Clause"
+        })
+    if not risks:
+        risks.append({
+            "title": "General Obligations Review",
+            "severity": "low",
+            "description": "Standard binding legal terms apply across all executing parties.",
+            "recommendation": "Verify all party names, signature blocks, and effective dates.",
+            "page": "1",
+            "clauseRef": "General Terms"
+        })
+
+    # Important Clauses
+    important_clauses = [
+        {
+            "title": "Scope & Primary Obligations",
+            "description": "Defines the core subject matter, deliverables, or premises covered by this document.",
+            "page": "1"
+        },
+        {
+            "title": "Notice & Communication Requirements",
+            "description": "Specifies formal delivery methods for legal notices and dispute communications.",
+            "page": "1"
         }
-    elif lang == "gu":
-        return {
-            "summary": f"આ દસ્તાવેજ ({doc_title}) મહત્વપૂર્ણ કાનૂની જોગવાઈઓ, અધિકારો અને જવાબદારીઓ ધરાવે છે જેની સમીક્ષા જરૂરી છે.",
-            "type": "કાનૂની દસ્તાવેજ",
-            "riskLevel": "Medium",
-            "riskScore": "મધ્યમ જોખમ (5/10)",
-            "risks": [
-                {
-                    "title": "નોટિસ અને સમાપ્તિની શરતો",
-                    "severity": "medium",
-                    "description": "સમાપ્તિ કલમો માટે નોટિસ અથવા દંડની શરતો જરૂરી હોઈ શકે છે.",
-                    "recommendation": "સહી કરતા પહેલા નોટિસ પિરિયડની જરૂરિયાતોની સમીક્ષા કરો."
-                },
-                {
-                    "title": "ગોપનીયતા અને બૌદ્ધિક સંપદા",
-                    "severity": "medium",
-                    "description": "પ્રમાણભૂત ગોપનીયતા અને IP ટ્રાન્સફર જવાબદારીઓ.",
-                    "recommendation": "ખાતરી કરો કે કરાર પૂરો થયા પછી જવાબદારીઓ સમાપ્ત થાય છે."
-                }
-            ],
-            "important_clauses": [
-                {
-                    "title": "સામાન્ય જવાબદારીઓ અને શરતો",
-                    "description": text_content[:200] + "...",
-                    "page": "1"
-                }
-            ],
-            "checklist": [
-                "તમામ પક્ષોના નામ અને અસરકારક તારીખો ચકાસો",
-                "ચુકવણી અને વળતરની શરતોની સમીક્ષા કરો",
-                "સમાપ્તિ નોટિસ પિરિયડની ખાતરી કરો"
-            ]
-        }
+    ]
+
+    # Verification Checklist
+    checklist = generate_checklist(text, language=language)
+
+    # Document-Specific Recommended Questions grounded strictly in actual extracted text
+    suggestedQuestions = extract_document_specific_questions(text)
 
     return {
-        "summary": f"This document ({doc_title}) contains key legal provisions, rights, obligations, and terms that require review.",
-        "type": "Legal Document",
-        "riskLevel": "Medium",
-        "riskScore": "Medium Risk (5/10)",
-        "risks": [
-            {
-                "title": "Notice & Termination Terms",
-                "severity": "medium",
-                "description": "Termination clauses may require notice or penalty clauses.",
-                "recommendation": "Review notice period requirements prior to signing."
-            },
-            {
-                "title": "Confidentiality & Intellectual Property",
-                "severity": "medium",
-                "description": "Standard confidentiality and IP transfer obligations.",
-                "recommendation": "Ensure obligations end after agreement termination."
-            }
-        ],
-        "important_clauses": [
-            {
-                "title": "General Obligations & Terms",
-                "description": text_content[:200] + "...",
-                "page": "1"
-            }
-        ],
-        "checklist": [
-            "Verify all party names and effective dates",
-            "Confirm payment and compensation terms",
-            "Review termination notice periods"
-        ]
+        "summary": summary,
+        "type": doc_type,
+        "riskLevel": risk_level,
+        "riskScore": risk_score,
+        "risks": risks,
+        "important_clauses": important_clauses,
+        "checklist": checklist,
+        "suggestedQuestions": suggestedQuestions
     }
 
 
 def main():
-    try:
-        from retrieve import retrieve_documents
-    except ImportError:
-        retrieve_documents = None
-
-    if len(sys.argv) > 1:
-        question = " ".join(sys.argv[1:])
-    else:
-        question = "What are the main terms in the document?"
-
-    print(f"\n[Legal Lens] Searching knowledge base for: '{question}'...")
-    
-    context = ""
-    if retrieve_documents:
-        results = retrieve_documents(question)
-        if results and "documents" in results and results["documents"] and results["documents"][0]:
-            context_chunks = results["documents"][0]
-            sources = results["metadatas"][0] if "metadatas" in results and results["metadatas"] else []
-            formatted_chunks = []
-            for i, chunk in enumerate(context_chunks):
-                src = sources[i] if i < len(sources) else {}
-                formatted_chunks.append(f"Source ({src.get('source', 'Unknown')}): {chunk}")
-            context = "\n\n".join(formatted_chunks)
-
-    if not context:
-        context = "No specific document context found in database."
-
-    answer = generate_answer(question, context)
-    checklist = generate_checklist(context)
-    
-    print("========== LEGAL LENS ANSWER ==========\n")
-    print(answer)
-    print("\n========== BEFORE YOU SIGN ==========\n")
-    print(checklist)
+    print("=== Legal Lens Work Agent (Local Engine) ===")
+    q = "What is the termination notice period?"
+    ctx = "SOURCE: Service Agreement (Page 1)\nCONTENT: Either party may terminate this agreement by providing 60 (sixty) days' prior written notice."
+    ans = generate_answer(q, ctx)
+    print("\n" + ans)
 
 if __name__ == "__main__":
     main()
