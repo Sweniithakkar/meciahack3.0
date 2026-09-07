@@ -176,6 +176,49 @@ export default function App() {
     }
   };
 
+  // Handle complete document deletion flow
+  const handleDeleteDocument = async (docId) => {
+    if (!docId) return false;
+    const docToDelete = documentsList.find((d) => d.id === docId);
+    const docName = docToDelete ? (docToDelete.displayName || docToDelete.name) : 'document';
+
+    try {
+      const res = await apiService.deleteDocument(docId);
+      if (res && res.success) {
+        showToast(`Deleted ${docName} successfully.`);
+        const updatedList = await apiService.getDocumentsList();
+        setDocumentsList(updatedList);
+
+        if (currentDocId === docId) {
+          if (currentUser?.id) {
+            localStorage.removeItem(`legalLensActiveDoc_${currentUser.id}`);
+          }
+          if (updatedList.length > 0) {
+            const nextDoc = updatedList[0];
+            setCurrentDoc(nextDoc);
+            setCurrentDocId(nextDoc.id);
+            if (currentUser?.id) {
+              localStorage.setItem(`legalLensActiveDoc_${currentUser.id}`, nextDoc.id);
+            }
+          } else {
+            setCurrentDoc(null);
+            setCurrentDocId(null);
+            setHasUploadedDoc(false);
+          }
+        }
+        return true;
+      } else {
+        const errorMsg = (res && res.error) || 'Failed to delete document from backend.';
+        alert(`Deletion Failed: ${errorMsg}`);
+        return false;
+      }
+    } catch (err) {
+      console.error('Document delete error:', err);
+      alert(`Error deleting document: ${err.message || 'Server error'}`);
+      return false;
+    }
+  };
+
   // Handle file upload from user with real RAG backend
   const handleFileUpload = async (file, language = 'en') => {
     setIsProcessing(true);
@@ -287,6 +330,10 @@ export default function App() {
   // Direct trigger to open chatbot with a specific question
   const handleOpenChatWithQuestion = (question) => {
     setChatInitialQuestion(question);
+    setTimeout(() => {
+      const el = document.getElementById('legal-lens-assistant');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 50);
   };
 
   // Reset state to home
@@ -352,6 +399,7 @@ export default function App() {
             documentsList={documentsList}
             currentDoc={currentDoc}
             onSelectDocument={handleSelectDocument}
+            onDeleteDocument={handleDeleteDocument}
             onNewDocument={() => setActiveNav('home')}
             onDownloadReport={(doc) => setReportModalDoc(doc || currentDoc)}
           />

@@ -15,6 +15,14 @@ export default function SummaryHighlight({ document, onOpenChat }) {
 
   const { summaryHighlight, simpleSummary, type, riskScore, riskLevel } = document;
 
+  const wordCount = document.wordCount || document.word_count || (document.executiveSummary ? document.executiveSummary.split(' ').length * 8 : 400);
+  const fullReadMins = document.readingTime || document.reading_time || Math.max(1, Math.ceil(wordCount / 200));
+  const summaryMins = Math.max(1, Math.ceil((document.executiveSummary || '').split(' ').length / 250)) || 1;
+  const timeSavedMins = document.timeSaved || document.time_saved || Math.max(1, fullReadMins - summaryMins);
+
+  const isHigh = riskLevel === 'High' || document.risk_classification === 'High Risk' || (document.risk_level >= 8);
+  const isMed = riskLevel === 'Medium' || document.risk_classification === 'Medium Risk' || (document.risk_level >= 5 && document.risk_level <= 7);
+
   return (
     <div className="space-y-6 mb-8">
       
@@ -38,18 +46,18 @@ export default function SummaryHighlight({ document, onOpenChat }) {
         {/* Risk Assessment Score */}
         <div className="rounded-2xl bg-white p-4 border border-[#D2DBEB]/80 shadow-2xs">
           <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#94A2BF] mb-1">
-            <ShieldAlert className="h-3.5 w-3.5 text-amber-500" />
+            <ShieldAlert className={`h-3.5 w-3.5 ${isHigh ? 'text-red-600' : isMed ? 'text-amber-500' : 'text-emerald-600'}`} />
             <span>Risk Level</span>
           </div>
           <div className="flex items-center gap-2">
             <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-bold ${
-              riskLevel === 'High' 
+              isHigh 
                 ? 'bg-red-50 text-red-700 border border-red-200' 
-                : riskLevel === 'Medium'
+                : isMed
                 ? 'bg-amber-50 text-amber-700 border border-amber-200'
                 : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
             }`}>
-              {riskScore}
+              {riskScore || `${document.risk_classification || 'Low Risk'} (${document.risk_level || 4}/10)`}
             </span>
           </div>
           <p className="text-[11px] text-[#6A90B4] mt-0.5">
@@ -78,10 +86,10 @@ export default function SummaryHighlight({ document, onOpenChat }) {
             <span>Time Saved</span>
           </div>
           <p className="text-base font-extrabold text-[#01162B]">
-            ~16 Mins Saved
+            ~{timeSavedMins} Min{timeSavedMins !== 1 ? 's' : ''} Saved
           </p>
           <p className="text-[11px] text-emerald-600 font-medium mt-0.5">
-            {summaryHighlight?.estimatedReadTime || '2 mins summary'}
+            {summaryHighlight?.estimatedReadTime || `~${summaryMins} min summary (${fullReadMins} min full read)`}
           </p>
         </div>
 

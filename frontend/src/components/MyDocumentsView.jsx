@@ -17,6 +17,7 @@ export default function MyDocumentsView({
   documentsList,
   currentDoc,
   onSelectDocument,
+  onDeleteDocument,
   onNewDocument,
   onDownloadReport
 }) {
@@ -91,8 +92,8 @@ export default function MyDocumentsView({
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {filteredDocs.map((doc) => {
           const isCurrent = currentDoc?.id === doc.id;
-          const isHigh = doc.riskLevel === 'High';
-          const isMed = doc.riskLevel === 'Medium';
+          const isHigh = doc.riskLevel === 'High' || doc.risk_classification === 'High Risk' || (doc.risk_level >= 8);
+          const isMed = doc.riskLevel === 'Medium' || doc.risk_classification === 'Medium Risk' || (doc.risk_level >= 5 && doc.risk_level <= 7);
 
           return (
             <div
@@ -170,10 +171,20 @@ export default function MyDocumentsView({
                     <Download className="h-4 w-4" />
                   </button>
                   <button
-                    onClick={async () => {
-                      if (window.confirm(`Are you sure you want to delete ${doc.name}?`)) {
-                        await apiService.deleteDocument(doc.id);
-                        window.location.reload();
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      const docName = doc.displayName || doc.name || 'document';
+                      if (window.confirm(`Are you sure you want to delete "${docName}"? This action cannot be undone.`)) {
+                        if (onDeleteDocument) {
+                          await onDeleteDocument(doc.id);
+                        } else {
+                          const res = await apiService.deleteDocument(doc.id);
+                          if (res && res.success) {
+                            window.location.reload();
+                          } else {
+                            alert(`Failed to delete document: ${res?.error || 'Server error'}`);
+                          }
+                        }
                       }
                     }}
                     className="p-1.5 text-[#6A90B4] hover:text-red-600 rounded-lg hover:bg-red-50 transition-colors"

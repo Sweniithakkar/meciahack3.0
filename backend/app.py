@@ -247,6 +247,67 @@ def admin_documents():
 
 # ==========================================
 # USER DOCUMENTS ENDPOINTS
+from utils.risk_engine import compute_risk_level
+
+# ==========================================
+# HELPER FOR PERSISTED DOCUMENT FORMATTING
+# ==========================================
+
+def format_doc_for_api(doc):
+    risks = json.loads(doc["risks_json"]) if doc.get("risks_json") else []
+    clauses = json.loads(doc["clauses_json"]) if doc.get("clauses_json") else []
+    
+    # Use persisted risk values from database if available
+    db_risk_level = doc.get("risk_level")
+    db_risk_score = doc.get("risk_score")
+
+    if db_risk_score and db_risk_level and str(db_risk_level).isdigit():
+        r_level = int(db_risk_level)
+        r_score = db_risk_score
+        r_class = db_risk_score.split(" (")[0] if " (" in db_risk_score else ("Low Risk" if r_level <= 4 else ("Medium Risk" if r_level <= 7 else "High Risk"))
+    else:
+        # Re-evaluate once for legacy records with missing persisted risk values
+        eval_res = compute_risk_level(clauses=risks if risks else clauses)
+        r_level = eval_res["risk_level"]
+        r_class = eval_res["risk_classification"]
+        r_score = eval_res["risk_score"]
+
+    r_short = r_class.replace(" Risk", "")
+
+    sq_json = doc.get("suggested_questions_json")
+    suggested_questions = json.loads(sq_json) if sq_json else []
+    if not suggested_questions:
+        try:
+            from rag.llm import extract_document_specific_questions
+            combined_text = f"{doc.get('summary') or ''} {doc.get('filename') or ''} {doc.get('doc_type') or ''} {doc.get('clauses_json') or ''} {doc.get('risks_json') or ''}"
+            suggested_questions = extract_document_specific_questions(combined_text)
+        except Exception:
+            suggested_questions = []
+
+    return {
+        "id": doc["id"],
+        "name": doc["filename"],
+        "displayName": doc["display_name"],
+        "fileSize": doc["file_size"],
+        "uploadDate": doc["upload_date"],
+        "status": doc["status"],
+        "summary": doc["summary"],
+        "type": doc.get("doc_type") or "Legal Document",
+        "risk_level": r_level,
+        "risk_classification": r_class,
+        "riskLevel": r_short,
+        "riskScore": r_score,
+        "color_code": "#2E7D32" if r_level <= 4 else ("#EF6C00" if r_level <= 7 else "#C62828"),
+        "checklist": json.loads(doc["checklist_json"]) if doc.get("checklist_json") else [],
+        "risks": risks,
+        "clauses": clauses,
+        "sources": json.loads(doc["sources_json"]) if doc.get("sources_json") else [],
+        "suggestedQuestions": suggested_questions
+    }
+
+
+# ==========================================
+# PROTECTED DOCUMENT MANAGEMENT ENDPOINTS
 # ==========================================
 
 @app.route("/api/documents", methods=["GET"])
@@ -254,26 +315,7 @@ def admin_documents():
 def list_user_documents():
     user_id = request.current_user["id"]
     raw_docs = get_user_documents(user_id)
-    formatted_docs = []
-
-    for doc in raw_docs:
-        formatted_docs.append({
-            "id": doc["id"],
-            "name": doc["filename"],
-            "displayName": doc["display_name"],
-            "fileSize": doc["file_size"],
-            "uploadDate": doc["upload_date"],
-            "status": doc["status"],
-            "summary": doc["summary"],
-            "type": doc.get("doc_type") or "Legal Document",
-            "riskLevel": doc.get("risk_level") or "Medium",
-            "riskScore": doc.get("risk_score") or "Medium Risk",
-            "checklist": json.loads(doc["checklist_json"]) if doc.get("checklist_json") else [],
-            "risks": json.loads(doc["risks_json"]) if doc.get("risks_json") else [],
-            "clauses": json.loads(doc["clauses_json"]) if doc.get("clauses_json") else [],
-            "sources": json.loads(doc["sources_json"]) if doc.get("sources_json") else [],
-            "suggestedQuestions": json.loads(doc["suggested_questions_json"]) if doc.get("suggested_questions_json") else []
-        })
+    formatted_docs = [format_doc_for_api(doc) for doc in raw_docs]
 
     return jsonify({
         "success": True,
@@ -292,23 +334,7 @@ def get_single_document(doc_id):
 
     return jsonify({
         "success": True,
-        "document": {
-            "id": doc["id"],
-            "name": doc["filename"],
-            "displayName": doc["display_name"],
-            "fileSize": doc["file_size"],
-            "uploadDate": doc["upload_date"],
-            "status": doc["status"],
-            "summary": doc["summary"],
-            "type": doc.get("doc_type") or "Legal Document",
-            "riskLevel": doc.get("risk_level") or "Medium",
-            "riskScore": doc.get("risk_score") or "Medium Risk",
-            "checklist": json.loads(doc["checklist_json"]) if doc.get("checklist_json") else [],
-            "risks": json.loads(doc["risks_json"]) if doc.get("risks_json") else [],
-            "clauses": json.loads(doc["clauses_json"]) if doc.get("clauses_json") else [],
-            "sources": json.loads(doc["sources_json"]) if doc.get("sources_json") else [],
-            "suggestedQuestions": json.loads(doc["suggested_questions_json"]) if doc.get("suggested_questions_json") else []
-        }
+        "document": format_doc_for_api(doc)
     })
 
 
@@ -408,8 +434,10 @@ def analyze_pdf():
         checklist_data = analysis_result.get("checklist", [])
         sources_data = analysis_result.get("sources", [])
         doc_type = analysis_result.get("type", "Legal Document")
-        risk_level = analysis_result.get("riskLevel", "Medium")
-        risk_score = analysis_result.get("riskScore", "Medium Risk")
+        risk_level = analysis_result.get("risk_level")
+        risk_classification = analysis_result.get("risk_classification")
+        color_code = analysis_result.get("color_code")
+        risk_score = analysis_result.get("riskScore")
         suggested_questions = analysis_result.get("suggestedQuestions", [])
 
         display_name = file.filename.replace(".pdf", "").replace(".PDF", "").replace("_", " ").title()
@@ -432,7 +460,7 @@ def analyze_pdf():
             sources_json=json.dumps(sources_data),
             clauses_json=json.dumps(clauses_data),
             doc_type=doc_type,
-            risk_level=risk_level,
+            risk_level=str(risk_level) if risk_level is not None else None,
             risk_score=risk_score,
             suggested_questions_json=json.dumps(suggested_questions)
         )
@@ -448,13 +476,19 @@ def analyze_pdf():
             "filename": file.filename,
             "language": language,
             "summary": summary_text,
-            "type": analysis_result.get("type", "Legal Document"),
-            "riskLevel": analysis_result.get("riskLevel", "Medium"),
-            "riskScore": analysis_result.get("riskScore", "Medium Risk"),
+            "type": doc_type,
+            "risk_level": risk_level,
+            "risk_classification": risk_classification,
+            "color_code": color_code,
+            "riskLevel": analysis_result.get("riskLevel"),
+            "riskScore": risk_score,
+            "word_count": analysis_result.get("word_count"),
+            "reading_time": analysis_result.get("reading_time"),
+            "time_saved": analysis_result.get("time_saved"),
             "risks": risks_data,
             "important_clauses": clauses_data,
             "checklist": checklist_data,
-            "suggestedQuestions": analysis_result.get("suggestedQuestions", []),
+            "suggestedQuestions": suggested_questions,
             "sources": sources_data
         })
 
@@ -504,8 +538,14 @@ def reanalyze_document_endpoint(doc_id):
             "language": language,
             "summary": summary_text,
             "type": analysis_result.get("type", "Legal Document"),
-            "riskLevel": analysis_result.get("riskLevel", "Medium"),
-            "riskScore": analysis_result.get("riskScore", "Medium Risk"),
+            "risk_level": analysis_result.get("risk_level"),
+            "risk_classification": analysis_result.get("risk_classification"),
+            "color_code": analysis_result.get("color_code"),
+            "riskLevel": analysis_result.get("riskLevel"),
+            "riskScore": analysis_result.get("riskScore"),
+            "word_count": analysis_result.get("word_count"),
+            "reading_time": analysis_result.get("reading_time"),
+            "time_saved": analysis_result.get("time_saved"),
             "risks": risks_data,
             "important_clauses": clauses_data,
             "checklist": checklist_data,

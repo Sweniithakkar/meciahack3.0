@@ -12,9 +12,15 @@ export default function SuggestedQuestions({
   suggestedQuestions, 
   onSelectQuestion 
 }) {
-  if (!suggestedQuestions || suggestedQuestions.length === 0) return null;
+  const listToUse = (Array.isArray(suggestedQuestions) && suggestedQuestions.length > 0)
+    ? suggestedQuestions
+    : [
+        'What notice period is required to terminate or cancel this agreement?',
+        'What are the exact payment milestones and fee obligations?',
+        'What are the primary obligations and responsibilities of each party under this document?'
+      ];
 
-  const normalizedQuestions = (suggestedQuestions || []).map((item, idx) => {
+  const normalizedQuestions = listToUse.slice(0, 3).map((item, idx) => {
     if (typeof item === 'object' && item !== null) {
       return {
         id: item.id || `sq-${idx}`,

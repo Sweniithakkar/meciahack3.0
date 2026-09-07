@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.exc import IntegrityError
 
-from models import Base, User, Document, ActivityLog
+from models import Base, User, Document, ActivityLog, ChatMessage
 
 try:
     from dotenv import load_dotenv
@@ -360,12 +360,41 @@ def get_document_by_hash(user_id, document_hash):
 def delete_user_document(doc_id, user_id):
     session = ScopedSession()
     try:
-        doc = session.query(Document).filter(Document.id == doc_id, Document.user_id == int(user_id)).first()
+        # Strictly verify ownership using BOTH doc_id AND user_id
+        doc = session.query(Document).filter(Document.id == str(doc_id), Document.user_id == int(user_id)).first()
         if doc:
+            file_path = doc.file_path
+
+            # 1. Delete associated chat history records tied to this document and user
+            session.query(ChatMessage).filter(
+                ChatMessage.document_id == str(doc_id),
+                ChatMessage.user_id == int(user_id)
+            ).delete(synchronize_session=False)
+
+            # 2. Delete document SQL record
             session.delete(doc)
             session.commit()
             session.close()
+
+            # 3. Delete stored PDF file on disk if it exists
+            if file_path and os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    safe_log(f"[+] Deleted stored PDF file: {file_path}")
+                except Exception as fe:
+                    safe_log(f"[!] Warning removing PDF file {file_path}: {fe}")
+
+            # 4. Delete vector / Chroma DB data associated with this document
+            try:
+                from rag.retrieve import collection
+                if collection:
+                    collection.delete(where={"doc_id": str(doc_id)})
+                    safe_log(f"[+] Deleted ChromaDB vector data for doc_id={doc_id}")
+            except Exception as ve:
+                safe_log(f"[!] ChromaDB vector deletion notice for doc_id={doc_id}: {ve}")
+
             return True
+
         session.close()
         return False
     except Exception as e:

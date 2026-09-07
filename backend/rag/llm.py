@@ -4,6 +4,7 @@ import json
 import re
 import socket
 import hashlib
+import math
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
@@ -15,6 +16,12 @@ if os.path.exists(venv_site) and venv_site not in sys.path:
 
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
+
+BACKEND_DIR = os.path.dirname(SCRIPT_DIR)
+if BACKEND_DIR not in sys.path:
+    sys.path.insert(0, BACKEND_DIR)
+
+from utils.risk_engine import compute_risk_level
 
 DEFAULT_MODEL = "llama3.2:3b"
 
@@ -314,10 +321,12 @@ def extract_document_specific_questions(text_content):
     if len(questions) < 3:
         if any(k in combined for k in ['notice', 'terminat', 'cancellation']) and not any('notice' in q.lower() for q in questions):
             questions.append('What notice period is required to terminate or cancel this agreement?')
-        if any(k in combined for k in ['payment', 'fee', 'charge', 'cost']) and not any('payment' in q.lower() or 'fee' in q.lower() or 'salary' in q.lower() or 'deposit' in q.lower() for q in questions):
+        if any(k in combined for k in ['payment', 'fee', 'charge', 'cost', 'rent']) and not any('payment' in q.lower() or 'fee' in q.lower() or 'salary' in q.lower() or 'deposit' in q.lower() or 'rent' in q.lower() for q in questions):
             questions.append('What are the exact payment milestones and fee obligations?')
-        if any(k in combined for k in ['obligations', 'rights', 'duties', 'responsibilit']) and len(questions) < 3:
-            questions.append('What are the primary obligations and responsibilities of each party under this document?')
+        if any(k in combined for k in ['obligations', 'rights', 'duties', 'responsibilit', 'lock-in', 'term']) and len(questions) < 3:
+            questions.append('What are the primary obligations and terms under this document?')
+        if len(questions) < 3:
+            questions.append('What key clauses or conditions should I review before signing?')
 
     return questions[:3]
 
@@ -354,21 +363,10 @@ def analyze_full_document(text_content, language="en"):
     if len(summary) > 400:
         summary = summary[:397] + "..."
 
-    # Assess Risk Level
+    # Identify Risks & Build Specific Risk Cards
     risk_keywords_high = ["penalty", "indemnity", "unilateral", "breach", "forfeit", "terminate without cause", "sole discretion"]
     high_count = sum(1 for w in risk_keywords_high if w in text_lower)
 
-    if high_count >= 3:
-        risk_level = "High"
-        risk_score = "High Risk (8/10)"
-    elif high_count >= 1:
-        risk_level = "Medium"
-        risk_score = "Medium Risk (5/10)"
-    else:
-        risk_level = "Low"
-        risk_score = "Low Risk (2/10)"
-
-    # Identify Risks
     risks = []
     if "terminate" in text_lower or "termination" in text_lower:
         risks.append({
@@ -421,6 +419,65 @@ def analyze_full_document(text_content, language="en"):
         }
     ]
 
+    # 1. Word Count & Reading Time Calculation
+    word_count = len(text.split()) if text else 0
+    reading_time_minutes = max(1, math.ceil(word_count / 200)) if word_count > 0 else 1  # Legal reading speed ~ 200 WPM
+    summary_word_count = len(summary.split())
+    summary_read_time = max(1, math.ceil(summary_word_count / 250))
+    time_saved_minutes = max(1, reading_time_minutes - summary_read_time)
+
+    # 2. Extract Evaluated Clauses & Assign Severities s_i (1 to 10)
+    raw_clause_chunks = [p.strip() for p in re.split(r'\n\s*\n|\n(?=[0-9]+\.|\([a-z0-9]+\)|Section|Clause)', text) if len(p.strip()) > 20]
+    if not raw_clause_chunks:
+        raw_clause_chunks = [l.strip() for l in text.split("\n") if len(l.strip()) > 30]
+    if not raw_clause_chunks:
+        raw_clause_chunks = [text] if text else ["Standard legal document provision"]
+
+    high_risk_kws = ["penalty", "indemnity", "indemnify", "unlimited liability", "liquidated damages", "breach", "forfeit", "terminate without cause", "sole discretion", "unilateral", "binding arbitration", "class action waiver", "non-compete", "default"]
+    med_risk_kws = ["late fee", "interest", "notice period", "grace period", "auto-renew", "automatic renewal", "confidential", "disclose", "jurisdiction", "governing law", "modification", "assignment"]
+
+    severity_scores = []
+    for chunk in raw_clause_chunks:
+        c_lower = chunk.lower()
+        high_matches = sum(1 for kw in high_risk_kws if kw in c_lower)
+        med_matches = sum(1 for kw in med_risk_kws if kw in c_lower)
+        if high_matches >= 2:
+            score = 9
+        elif high_matches == 1:
+            score = 8
+        elif med_matches >= 2:
+            score = 6
+        elif med_matches == 1:
+            score = 5
+        else:
+            score = 3
+        severity_scores.append(score)
+
+    evaluated_clause_count = len(severity_scores)
+    s_max = max(severity_scores) if severity_scores else 1
+    n_high = sum(1 for s in severity_scores if s >= 8)
+
+    # 3. Calculate Risk Level via 3-step formula
+    risk_obj = compute_risk_level(scores=severity_scores, n=evaluated_clause_count, s_max=s_max, n_high=n_high)
+
+    raw_score = float(s_max) + (0.28 * float(evaluated_clause_count))
+    clamped_score = min(10.0, max(1.0, raw_score))
+    base_level = int(math.floor(clamped_score + 0.5))
+    hard_trigger = (n_high >= 1) or (evaluated_clause_count >= 26)
+    final_risk_level = risk_obj["risk_level"]
+
+    # 4. Print Required [RISK DEBUG] Log Output
+    print(f"\n[RISK DEBUG]")
+    print(f"n={evaluated_clause_count}")
+    print(f"severities={severity_scores}")
+    print(f"s_max={s_max}")
+    print(f"n_high={n_high}")
+    print(f"raw_score={raw_score:.2f}")
+    print(f"base_level={base_level}")
+    print(f"hard_trigger={str(hard_trigger).lower()}")
+    print(f"final_risk_level={final_risk_level}")
+    print(f"reading_time_source=Word count derived ({word_count} words -> {reading_time_minutes} mins full read, {time_saved_minutes} mins saved)")
+
     # Verification Checklist
     checklist = generate_checklist(text, language=language)
 
@@ -430,8 +487,14 @@ def analyze_full_document(text_content, language="en"):
     return {
         "summary": summary,
         "type": doc_type,
-        "riskLevel": risk_level,
-        "riskScore": risk_score,
+        "riskLevel": risk_obj["risk_classification"].replace(" Risk", ""),
+        "riskScore": risk_obj["risk_score"],
+        "risk_level": risk_obj["risk_level"],
+        "risk_classification": risk_obj["risk_classification"],
+        "color_code": risk_obj["color_code"],
+        "word_count": word_count,
+        "reading_time": reading_time_minutes,
+        "time_saved": time_saved_minutes,
         "risks": risks,
         "important_clauses": important_clauses,
         "checklist": checklist,

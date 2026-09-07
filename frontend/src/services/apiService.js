@@ -1,4 +1,5 @@
 import { SAMPLE_DOCUMENTS } from '../data/mockData';
+import { computeRiskLevel } from '../utils/riskEngine';
 
 /**
  * ============================================================================
@@ -221,17 +222,30 @@ class LegalLensAPIService {
 
     const summaryText = d.summary || d.executiveSummary || 'Document analyzed by Legal Lens RAG Pipeline.';
 
-    return {
-      id: d.id,
-      name: d.name || d.filename,
-      displayName: d.displayName || d.name || d.filename,
-      fileSize: d.fileSize || '1.5 MB',
-      uploadDate: d.uploadDate || 'Today',
-      status: d.status || 'Document analyzed',
-      type: d.type || 'Legal Document',
-      riskLevel: d.riskLevel || (risks.some(r => r.level === 'high') ? 'High' : 'Medium'),
-      riskScore: d.riskScore || (risks.some(r => r.level === 'high') ? 'High Risk (7/10)' : 'Medium Risk (4/10)'),
-      executiveSummary: summaryText,
+      const evaluatedRisk = computeRiskLevel({
+        clauses: risks.length > 0 ? risks : clauses,
+        n: clauses.length > 0 ? clauses.length : (risks.length > 0 ? risks.length + 3 : 5)
+      });
+
+      const finalRiskLevel = d.risk_level || evaluatedRisk.risk_level;
+      const finalClassification = d.risk_classification || evaluatedRisk.risk_classification;
+      const finalColorCode = d.color_code || evaluatedRisk.color_code;
+      const finalRiskScore = d.riskScore || `${finalClassification} (${finalRiskLevel}/10)`;
+
+      return {
+        id: d.id,
+        name: d.name || d.filename,
+        displayName: d.displayName || d.name || d.filename,
+        fileSize: d.fileSize || '1.5 MB',
+        uploadDate: d.uploadDate || 'Today',
+        status: d.status || 'Document analyzed',
+        type: d.type || 'Legal Document',
+        riskLevel: finalClassification.replace(' Risk', ''),
+        risk_level: finalRiskLevel,
+        risk_classification: finalClassification,
+        color_code: finalColorCode,
+        riskScore: finalRiskScore,
+        executiveSummary: summaryText,
       simpleSummary: {
         text: summaryText,
         keyTakeaways: checklist.slice(0, 3).map(c => typeof c === 'object' ? (c.item || c.text) : String(c))
@@ -247,9 +261,40 @@ class LegalLensAPIService {
       checklist: checklist,
       beforeYouSign: beforeYouSign,
       sources: d.sources || [],
-      suggestedQuestions: Array.isArray(d.suggestedQuestions) && d.suggestedQuestions.length > 0
-        ? d.suggestedQuestions
-        : (d.suggested_questions_json ? (typeof d.suggested_questions_json === 'string' ? JSON.parse(d.suggested_questions_json) : d.suggested_questions_json) : [])
+      suggestedQuestions: (() => {
+        let sq = Array.isArray(d.suggestedQuestions) && d.suggestedQuestions.length > 0
+          ? d.suggestedQuestions
+          : (d.suggested_questions_json ? (typeof d.suggested_questions_json === 'string' ? JSON.parse(d.suggested_questions_json) : d.suggested_questions_json) : []);
+        if (!Array.isArray(sq) || sq.length === 0) {
+          const typeStr = String(d.type || d.doc_type || d.name || '').toLowerCase();
+          if (typeStr.includes('employ') || typeStr.includes('job') || typeStr.includes('offer') || typeStr.includes('work')) {
+            sq = [
+              'What is the notice period required for resignation or termination?',
+              'What are the terms and duration of the probation period?',
+              'What are the compensation structure, payment terms, or salary details?'
+            ];
+          } else if (typeStr.includes('rent') || typeStr.includes('lease') || typeStr.includes('tenant') || typeStr.includes('house')) {
+            sq = [
+              'What is the security deposit amount and under what conditions is it refunded?',
+              'What is the rent payment amount, due date, and payment policy?',
+              'What notice period is required for terminating the lease?'
+            ];
+          } else if (typeStr.includes('nda') || typeStr.includes('confidential') || typeStr.includes('disclosure')) {
+            sq = [
+              'What specific information is classified as confidential and what is the non-disclosure duration?',
+              'What non-compete or non-solicitation restrictions apply and for how long?',
+              'What governing law or dispute resolution mechanism applies to this contract?'
+            ];
+          } else {
+            sq = [
+              'What notice period is required to terminate or cancel this agreement?',
+              'What are the exact payment milestones and fee obligations?',
+              'What are the primary obligations and responsibilities of each party under this document?'
+            ];
+          }
+        }
+        return sq;
+      })()
     };
   }
 
@@ -260,10 +305,14 @@ class LegalLensAPIService {
         headers: this.getAuthHeaders(),
       });
       const data = await response.json();
-      return response.ok && data.success;
+      if (response.ok && data.success) {
+        this.documents = this.documents.filter((d) => d.id !== id);
+        return { success: true };
+      }
+      return { success: false, error: data.error || 'Failed to delete document from server.' };
     } catch (e) {
       console.error(`Failed to delete document ${id}:`, e);
-      return false;
+      return { success: false, error: e.message || 'Network error while deleting document.' };
     }
   }
 
