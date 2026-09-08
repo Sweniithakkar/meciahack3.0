@@ -8,7 +8,7 @@ import { computeRiskLevel } from '../utils/riskEngine';
  */
 
 const envApiUrl = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL;
-const defaultApiUrl = 'https://meciahack3-0-j4ly.onrender.com/api';
+const defaultApiUrl = 'http://localhost:5000/api';
 const rawApiUrl = envApiUrl || defaultApiUrl;
 const normalizedApiUrl = rawApiUrl.endsWith('/api') ? rawApiUrl : `${rawApiUrl.replace(/\/$/, '')}/api`;
 
