@@ -52,7 +52,7 @@ app = Flask(__name__)
 CORS(
     app,
     resources={
-        r"/api/*": {
+        r"/api/.*": {
             "origins": ["https://meciahack3-0-1.onrender.com"],
             "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
             "allow_headers": ["Content-Type", "Authorization"],
