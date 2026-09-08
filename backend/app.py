@@ -5,6 +5,7 @@ import json
 import hashlib
 import time
 from datetime import datetime
+import gc
 
 # Ensure backend directory is in sys.path
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -42,7 +43,7 @@ from utils.db import (
 from utils.auth import (
     hash_password, verify_password, generate_token, login_required, admin_required
 )
-from utils.pdf_loader import extract_text
+from utils.pdf_loader import extract_text, load_pdf
 from utils.chunker import create_chunks
 from document_ingest import process_pdf
 from rag.pipeline import analyze_document_pdf, ask_document, analyze_document
@@ -53,12 +54,25 @@ CORS(
     app,
     resources={
         r"/api/.*": {
-            "origins": ["https://meciahack3-0-1.onrender.com"],
+            "origins": "*",
             "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-            "allow_headers": ["Content-Type", "Authorization"],
+            "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
+        },
+        r"/.*": {
+            "origins": "*",
+            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
         }
     }
 )
+
+@app.after_request
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With, Accept"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    return response
+
 
 # Use /tmp directory on Vercel serverless functions
 if os.environ.get("VERCEL") or not os.access(SCRIPT_DIR, os.W_OK):
@@ -414,22 +428,28 @@ def analyze_pdf():
         with open(pdf_path, "wb") as f:
             f.write(file_bytes)
 
+        del file_bytes
+        gc.collect()
+
         print(f"\n📄 PDF received for User {user_id}: {file.filename} (Language: {language})")
 
-        # Extract text & process chunks
-        text = extract_text(pdf_path)
+        # Extract text & page structure once
+        doc_info = load_pdf(pdf_path)
+        text = doc_info.get("text", "")
+        pages = doc_info.get("pages", [])
 
         if not text:
             return jsonify({"error": "Could not extract text from PDF"}), 400
 
-        print(f"✅ Extracted {len(text)} characters")
+        print(f"✅ Extracted {len(text)} characters ({len(pages)} pages)")
 
         process_pdf(
             pdf_path,
             user_id=user_id,
             doc_id=doc_id,
             doc_hash=doc_hash,
-            pre_extracted_text=text
+            pre_extracted_text=text,
+            pages=pages
         )
 
         print(f"✅ PDF stored in Vector DB (user {user_id}, doc {doc_id})")
@@ -440,7 +460,8 @@ def analyze_pdf():
             pdf_path,
             doc_id=doc_id,
             user_id=user_id,
-            language=language
+            language=language,
+            pre_extracted_text=text
         )
         t_llm_end = time.time()
         print(f"[PERF] RAG Document Analysis time: {int((t_llm_end - t_llm_start)*1000)} ms")

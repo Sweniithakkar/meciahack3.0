@@ -38,18 +38,23 @@ else:
             CHROMA_PATH = alt_path
 
 # ==============================
-# CONNECT TO CHROMADB
+# CONNECT TO CHROMADB (LAZY LOAD)
 # ==============================
 
-client = chromadb.PersistentClient(path=CHROMA_PATH)
+_chroma_collection = None
 
-try:
-    collection = client.get_collection(name="uploaded_documents")
-except Exception:
-    try:
-        collection = client.get_collection(name="legal_documents")
-    except Exception:
-        collection = client.get_or_create_collection(name="uploaded_documents")
+def get_chroma_collection():
+    global _chroma_collection
+    if _chroma_collection is None:
+        client = chromadb.PersistentClient(path=CHROMA_PATH)
+        try:
+            _chroma_collection = client.get_collection(name="uploaded_documents")
+        except Exception:
+            try:
+                _chroma_collection = client.get_collection(name="legal_documents")
+            except Exception:
+                _chroma_collection = client.get_or_create_collection(name="uploaded_documents")
+    return _chroma_collection
 
 
 def get_query_embedding(query):
@@ -64,6 +69,7 @@ def retrieve_documents(query, doc_id=None, user_id=None, n_results=5):
     Enforces strict doc_id and user_id filtering to isolate document context.
     """
     try:
+        collection = get_chroma_collection()
         query_embedding = get_query_embedding(query)
         
         # Strict document-specific filter if doc_id is available

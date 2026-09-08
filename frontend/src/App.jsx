@@ -246,7 +246,7 @@ export default function App() {
     } catch (err) {
       setIsProcessing(false);
       console.error('Upload Error:', err);
-      alert(err.message || 'Error uploading document. Please check your backend connection.');
+      showToast(err.message || 'Error uploading document. Please check your network connection.');
     }
   };
 
@@ -270,7 +270,7 @@ export default function App() {
     } catch (err) {
       setIsProcessing(false);
       console.error('Re-analysis error:', err);
-      alert(err.message || 'Error re-analyzing document.');
+      showToast(err.message || 'Error re-analyzing document.');
     }
   };
 

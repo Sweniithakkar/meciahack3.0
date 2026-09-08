@@ -40,11 +40,17 @@ os.makedirs(os.path.dirname(CHROMA_PATH), exist_ok=True)
 os.makedirs(PDF_FOLDER, exist_ok=True)
 
 # ==============================
-# CONNECT TO CHROMADB
+# CONNECT TO CHROMADB (LAZY LOAD)
 # ==============================
 
-client = chromadb.PersistentClient(path=CHROMA_PATH)
-collection = client.get_or_create_collection(name="uploaded_documents")
+_chroma_collection = None
+
+def get_chroma_collection():
+    global _chroma_collection
+    if _chroma_collection is None:
+        client = chromadb.PersistentClient(path=CHROMA_PATH)
+        _chroma_collection = client.get_or_create_collection(name="uploaded_documents")
+    return _chroma_collection
 
 
 # ==============================
@@ -61,24 +67,30 @@ def create_embedding(text):
     return vec
 
 
-def process_pdf(pdf_path, user_id=None, doc_id=None, doc_hash=None, pre_extracted_text=None):
+def process_pdf(pdf_path, user_id=None, doc_id=None, doc_hash=None, pre_extracted_text=None, pages=None):
     filename = os.path.basename(pdf_path)
 
     print(f"\n[+] Processing PDF: {filename} (User: {user_id}, DocID: {doc_id})")
 
-    from utils.pdf_loader import PDFLoader
-    loader = PDFLoader()
-    doc_info = loader.load_pdf(pdf_path)
-    pages = doc_info.get("pages", [])
-
-    if not pages and pre_extracted_text:
-        pages = [{"page_number": 1, "text": pre_extracted_text}]
+    if not pages:
+        if pre_extracted_text and pre_extracted_text.strip():
+            pages = [{"page_number": 1, "text": pre_extracted_text}]
+        else:
+            from utils.pdf_loader import PDFLoader
+            loader = PDFLoader()
+            doc_info = loader.load_pdf(pdf_path)
+            pages = doc_info.get("pages", [])
 
     if not pages:
         print(f"[!] No readable text found in PDF: {filename}")
         return
 
     prefix = f"{user_id}_{doc_id}_" if (user_id and doc_id) else f"{filename}_"
+    
+    ids = []
+    documents = []
+    embeddings = []
+    metadatas = []
     total_chunks = 0
 
     for page_info in pages:
@@ -100,13 +112,20 @@ def process_pdf(pdf_path, user_id=None, doc_id=None, doc_hash=None, pre_extracte
             if doc_id:
                 meta["doc_id"] = str(doc_id)
 
-            collection.upsert(
-                ids=[f"{prefix}p{page_num}_c{i}_{total_chunks}"],
-                documents=[chunk],
-                embeddings=[embedding],
-                metadatas=[meta]
-            )
+            ids.append(f"{prefix}p{page_num}_c{i}_{total_chunks}")
+            documents.append(chunk)
+            embeddings.append(embedding)
+            metadatas.append(meta)
             total_chunks += 1
+
+    if ids:
+        collection = get_chroma_collection()
+        collection.upsert(
+            ids=ids,
+            documents=documents,
+            embeddings=embeddings,
+            metadatas=metadatas
+        )
 
     print(f"[+] Successfully stored '{filename}' in Vector DB! Total page-aware chunks: {total_chunks}")
 

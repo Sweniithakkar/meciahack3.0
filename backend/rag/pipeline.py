@@ -28,11 +28,15 @@ from llm import generate_answer, generate_checklist, analyze_full_document
 from utils.pdf_loader import extract_text
 
 
-def analyze_document_pdf(pdf_path, doc_id=None, user_id=None, language="en"):
+def analyze_document_pdf(pdf_path, doc_id=None, user_id=None, language="en", pre_extracted_text=None):
     """
     Extracts text from PDF file and runs full RAG analysis (summary, risks, clauses, checklist) in target language.
     """
-    text = extract_text(pdf_path)
+    if pre_extracted_text and pre_extracted_text.strip():
+        text = pre_extracted_text
+    else:
+        text = extract_text(pdf_path)
+
     if not text or not text.strip():
         text = f"Legal document at {os.path.basename(pdf_path)}"
 
