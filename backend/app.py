@@ -49,9 +49,16 @@ from rag.pipeline import analyze_document_pdf, ask_document, analyze_document
 
 app = Flask(__name__)
 
-frontend_url = os.environ.get("FRONTEND_URL", "").strip()
-allowed_origins = [origin.strip() for origin in frontend_url.split(",") if origin.strip()] if frontend_url else "*"
-CORS(app, resources={r"/*": {"origins": allowed_origins}})
+CORS(
+    app,
+    resources={
+        r"/api/*": {
+            "origins": ["https://meciahack3-0-1.onrender.com"],
+            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            "allow_headers": ["Content-Type", "Authorization"],
+        }
+    }
+)
 
 # Use /tmp directory on Vercel serverless functions
 if os.environ.get("VERCEL") or not os.access(SCRIPT_DIR, os.W_OK):
