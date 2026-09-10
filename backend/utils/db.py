@@ -10,7 +10,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(BACKEND_DIR, ".."))
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
-from sqlalchemy import create_engine, text, inspect
+from sqlalchemy import create_engine, text, inspect, func
 from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.exc import IntegrityError
 
@@ -187,7 +187,7 @@ def create_user(name, email, password_hash, role="user"):
 
 
 def bootstrap_admin_user():
-    """Ensures single admin user configured via ADMIN_EMAIL has admin role and clean display name."""
+    """Ensures single admin user configured via ADMIN_EMAIL has admin role, valid password hash matching ADMIN_INITIAL_PASSWORD, and clean display name."""
     session = ScopedSession()
     try:
         # Sanitize any legacy database records with hardcoded "System Admin" name
@@ -204,7 +204,10 @@ def bootstrap_admin_user():
             session.close()
             return None
 
-        user = session.query(User).filter(User.email == admin_email).first()
+        admin_pass = os.environ.get("ADMIN_INITIAL_PASSWORD", "").strip()
+        from werkzeug.security import generate_password_hash, check_password_hash
+
+        user = session.query(User).filter(func.lower(User.email) == admin_email).first()
         if user:
             changed = False
             if user.role != "admin":
@@ -215,16 +218,18 @@ def bootstrap_admin_user():
             if admin_name and user.name != admin_name:
                 user.name = admin_name
                 changed = True
+            if admin_pass and not check_password_hash(user.password_hash, admin_pass):
+                user.password_hash = generate_password_hash(admin_pass)
+                changed = True
+                safe_log(f"[+] Synchronized password hash for admin account: {admin_email}")
             if changed:
                 session.commit()
             user_dict = user.to_dict()
             session.close()
             return user_dict
         
-        admin_pass = os.environ.get("ADMIN_INITIAL_PASSWORD", "").strip()
         if admin_pass:
-            from werkzeug.security import generate_password_hash
-            pwd_hash = generate_password_hash(admin_pass)
+            pwd_hash = hash_password(admin_pass)
             admin_name = os.environ.get("ADMIN_NAME", "").strip() or (admin_email.split("@")[0].replace(".", " ").replace("_", " ").title() if admin_email else "Admin")
             new_admin = User(
                 name=admin_name,
@@ -252,7 +257,7 @@ def bootstrap_admin_user():
 def get_user_by_email(email, include_password=False):
     session = ScopedSession()
     try:
-        user = session.query(User).filter(User.email == email.strip().lower()).first()
+        user = session.query(User).filter(func.lower(User.email) == email.strip().lower()).first()
         user_dict = user.to_dict(include_password=include_password) if user else None
         session.close()
         return user_dict

@@ -1,9 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Check, Copy, Mic, RotateCcw, Scale, Send, Sparkles } from 'lucide-react';
+import { Check, Copy, Mic, RotateCcw, Scale, Send, Sparkles, FileText, ChevronRight, X } from 'lucide-react';
 import { apiService } from '../services/apiService';
 
-// This component handles assistant presentation and live AI chatbot queries connected to the backend RAG pipeline.
-export default function FloatingChatbot({ currentDoc, initialQuestion, onClearInitialQuestion }) {
+export default function FloatingChatbot({ currentDoc, initialQuestion, onClearInitialQuestion, onClose }) {
   const [messages, setMessages] = useState([]);
   const [inputVal, setInputVal] = useState('');
   const [isTyping, setIsTyping] = useState(false);
@@ -30,7 +29,7 @@ export default function FloatingChatbot({ currentDoc, initialQuestion, onClearIn
     } catch (e) {}
   }
 
-  // Load chat history from backend database (with localStorage fallback)
+  // Load chat history from backend database
   useEffect(() => {
     if (!currentDoc || !currentDoc.id) return;
 
@@ -38,14 +37,13 @@ export default function FloatingChatbot({ currentDoc, initialQuestion, onClearIn
     const defaultWelcome = {
       id: 'welcome',
       sender: 'assistant',
-      text: `Hello! I've analyzed "${currentDoc.name || 'your document'}". I can help you understand its clauses, obligations, financial penalties, and potential areas that need attention. How can I assist you today?`,
+      text: `Hello! I'm your Legal Lens Assistant. I've analyzed "${currentDoc.name || 'your document'}". I can answer your questions, explain obligations, and clarify any legal terms with direct source citations.`,
       timestamp: 'Just now',
       source: `${currentDoc.displayName || currentDoc.name || 'Document'} · AI Analysis Engine`,
       page: 'Summary',
-      confidence: '100% Document Verified'
+      confidence: '100% Document Grounded'
     };
 
-    // Load from backend first
     apiService.getChatHistory(currentDoc.id).then((serverHistory) => {
       if (!isMounted) return;
       if (Array.isArray(serverHistory) && serverHistory.length > 0) {
@@ -63,7 +61,6 @@ export default function FloatingChatbot({ currentDoc, initialQuestion, onClearIn
           try { localStorage.setItem(storageKey, JSON.stringify(formatted)); } catch (_) {}
         }
       } else {
-        // Fallback to localStorage cache
         if (storageKey) {
           try {
             const saved = localStorage.getItem(storageKey);
@@ -74,9 +71,7 @@ export default function FloatingChatbot({ currentDoc, initialQuestion, onClearIn
                 return;
               }
             }
-          } catch (e) {
-            console.warn('Failed to load chat history cache:', e);
-          }
+          } catch (e) {}
         }
         setMessages([defaultWelcome]);
       }
@@ -89,14 +84,11 @@ export default function FloatingChatbot({ currentDoc, initialQuestion, onClearIn
     };
   }, [currentDoc?.id]);
 
-  // Sync state to local storage cache
   useEffect(() => {
     if (storageKey && messages.length > 0) {
       try {
         localStorage.setItem(storageKey, JSON.stringify(messages));
-      } catch (e) {
-        console.warn('Failed to save chat history cache:', e);
-      }
+      } catch (e) {}
     }
   }, [messages, storageKey]);
 
@@ -112,7 +104,6 @@ export default function FloatingChatbot({ currentDoc, initialQuestion, onClearIn
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isTyping]);
 
-  // Clean up Web Speech Recognition on unmount
   useEffect(() => {
     return () => {
       if (recognitionRef.current) {
@@ -136,7 +127,6 @@ export default function FloatingChatbot({ currentDoc, initialQuestion, onClearIn
     setInputVal('');
     setIsTyping(true);
 
-    // Save user message persistently in DB
     apiService.saveChatMessage(currentDoc.id, userMsg);
 
     try {
@@ -148,22 +138,20 @@ export default function FloatingChatbot({ currentDoc, initialQuestion, onClearIn
           sender: 'assistant',
           text: res.answer,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          source: res.source || `${currentDoc?.displayName || 'Document'} · RAG Pipeline`,
-          page: res.page || 'Vector DB',
+          source: res.source || `${currentDoc?.displayName || 'Document'} · RAG Engine`,
+          page: res.page || 'Page 1',
           confidence: res.confidence || 'Grounded Legal Lens AI'
         };
 
         setMessages((prev) => [...prev, assistantMsg]);
-        // Save assistant response persistently in DB
         apiService.saveChatMessage(currentDoc.id, assistantMsg);
       }
     } catch (err) {
       setIsTyping(false);
-      console.error('Chat error:', err);
       const errorMsg = {
         id: `err-${Date.now()}`,
         sender: 'assistant',
-        text: 'Unable to connect to Legal Lens AI right now. Please verify your backend connection.',
+        text: 'Unable to process question. Please check server connection.',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         source: 'System Error',
         page: null,
@@ -185,7 +173,7 @@ export default function FloatingChatbot({ currentDoc, initialQuestion, onClearIn
       {
         id: `welcome-${Date.now()}`,
         sender: 'assistant',
-        text: `Conversation cleared. How can I help you analyze "${currentDoc.name || 'this document'}"?`,
+        text: `Chat cleared. Ask anything about "${currentDoc.name || 'this document'}".`,
         timestamp: 'Just now',
         source: `${currentDoc.displayName || 'Document'} · Summary`,
         page: '1',
@@ -199,7 +187,6 @@ export default function FloatingChatbot({ currentDoc, initialQuestion, onClearIn
     await apiService.clearChatHistory(currentDoc.id);
   };
 
-  // Browser Native Web Speech API STT
   const toggleVoice = () => {
     if (isListening) {
       if (recognitionRef.current) {
@@ -211,7 +198,7 @@ export default function FloatingChatbot({ currentDoc, initialQuestion, onClearIn
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      alert('Voice input is not supported in this browser. Please use Chrome or Edge, or type your message.');
+      alert('Voice input is not supported in this browser. Please type your question.');
       return;
     }
 
@@ -220,38 +207,20 @@ export default function FloatingChatbot({ currentDoc, initialQuestion, onClearIn
       recognition.continuous = false;
       recognition.interimResults = true;
 
-      // Select speech language based on document selected language
       const langCode = currentDoc?.selectedLanguage || 'en';
-      if (langCode === 'hi') {
-        recognition.lang = 'hi-IN';
-      } else if (langCode === 'gu') {
-        recognition.lang = 'gu-IN';
-      } else {
-        recognition.lang = 'en-IN';
-      }
+      if (langCode === 'hi') recognition.lang = 'hi-IN';
+      else if (langCode === 'gu') recognition.lang = 'gu-IN';
+      else recognition.lang = 'en-IN';
 
-      recognition.onstart = () => {
-        setIsListening(true);
-      };
-
+      recognition.onstart = () => setIsListening(true);
       recognition.onresult = (event) => {
         let currentTranscript = '';
         for (let i = event.resultIndex; i < event.results.length; i++) {
           currentTranscript += event.results[i][0].transcript;
         }
-        if (currentTranscript) {
-          setInputVal(currentTranscript);
-        }
+        if (currentTranscript) setInputVal(currentTranscript);
       };
-
-      recognition.onerror = (event) => {
-        console.warn('Speech recognition error:', event.error);
-        setIsListening(false);
-        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-          alert('Microphone permission was denied. Please allow microphone access and try again.');
-        }
-      };
-
+      recognition.onerror = () => setIsListening(false);
       recognition.onend = () => {
         setIsListening(false);
         inputRef.current?.focus();
@@ -260,9 +229,7 @@ export default function FloatingChatbot({ currentDoc, initialQuestion, onClearIn
       recognitionRef.current = recognition;
       recognition.start();
     } catch (err) {
-      console.error('Failed to start browser Speech Recognition:', err);
       setIsListening(false);
-      alert('Microphone access or speech recognition failed. Please try again.');
     }
   };
 
@@ -273,7 +240,6 @@ export default function FloatingChatbot({ currentDoc, initialQuestion, onClearIn
       <div className="space-y-1.5 leading-relaxed">
         {lines.map((line, lineIdx) => {
           if (line.trim() === '') return <div key={lineIdx} className="h-1" />;
-          
           const parts = line.split(/(\*\*[^*]+\*\*)/g);
           return (
             <div key={lineIdx}>
@@ -296,84 +262,77 @@ export default function FloatingChatbot({ currentDoc, initialQuestion, onClearIn
 
   return (
     <section className="flex h-full min-h-[620px] flex-col overflow-hidden rounded-3xl border border-[#D2DBEB]/80 bg-white shadow-xl">
+      
+      {/* HEADER: Legal Lens Assistant ● Ready, Context */}
       <header className="flex items-center justify-between bg-[#01162B] px-5 py-4 text-white shrink-0">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#00385A] text-[#A2C4D9]">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[#00385A] text-[#A2C4D9] shadow-xs">
             <Scale className="h-5 w-5" />
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h2 className="text-base font-bold tracking-tight">Legal Lens Assistant</h2>
-              <span className="flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[9px] font-bold text-emerald-300">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Ready
+              <h2 className="text-base font-extrabold tracking-tight">Legal Lens Assistant</h2>
+              <span className="flex items-center gap-1 rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" /> Ready
               </span>
             </div>
             <p className="text-xs text-[#A2C4D9] truncate">
-              {currentDoc ? `Context: ${currentDoc.displayName || currentDoc.name}` : 'Your AI legal companion'}
+              Context: {currentDoc ? (currentDoc.name || currentDoc.displayName) : 'No Document Selected'}
             </p>
           </div>
         </div>
-        <button
-          onClick={handleResetChat}
-          className="rounded-lg p-2 text-[#A2C4D9] hover:bg-[#00385A] hover:text-white transition-colors"
-          title="Clear conversation"
-          aria-label="Clear conversation"
-        >
-          <RotateCcw className="h-4 w-4" />
-        </button>
+
+        <div className="flex items-center gap-1">
+          <button
+            onClick={handleResetChat}
+            className="rounded-xl p-2 text-[#A2C4D9] hover:bg-[#00385A] hover:text-white transition-colors cursor-pointer"
+            title="Clear conversation"
+          >
+            <RotateCcw className="h-4 w-4" />
+          </button>
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="rounded-xl p-2 text-[#A2C4D9] hover:bg-[#00385A] hover:text-white transition-colors cursor-pointer ml-1"
+              title="Close Assistant"
+              aria-label="Close Assistant"
+            >
+              <X className="h-5 w-5 text-white" />
+            </button>
+          )}
+        </div>
       </header>
 
-      {/* Dynamic Recommended Questions Chips */}
-      <div className="border-b border-[#D2DBEB] bg-[#F0F4F8] px-4 py-3 shrink-0">
-        <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-[#6A90B4]">
-          Recommended questions for this document
-        </p>
-        {suggestedQuestionsList.length > 0 ? (
-          <div className="flex gap-2 overflow-x-auto pb-0.5 scrollbar-none">
-            {suggestedQuestionsList.map((chip, idx) => (
-              <button
-                key={`${idx}-${chip}`}
-                onClick={() => handleSendMessage(chip)}
-                className="shrink-0 rounded-full border border-[#D2DBEB] bg-white px-3 py-1.5 text-xs font-semibold text-[#00385A] transition-colors hover:border-[#00385A] hover:bg-[#01162B] hover:text-white shadow-2xs"
-              >
-                {chip}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <p className="text-xs text-[#6A90B4] italic py-0.5">
-            Recommended questions will appear once this document has finished processing.
-          </p>
-        )}
-      </div>
-
-      {/* Chat Messages Body */}
+      {/* CHAT MESSAGES BODY */}
       <div className="flex-1 overflow-y-auto bg-[#F8FAFC] p-4 space-y-4">
         {messages.map((msg) => {
           const isUser = msg.sender === 'user';
           return (
             <div key={msg.id} className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>
               <div
-                className={`max-w-[90%] rounded-2xl p-3.5 text-sm leading-relaxed shadow-2xs ${
+                className={`max-w-[90%] rounded-3xl p-4 text-xs sm:text-sm leading-relaxed shadow-2xs ${
                   isUser
-                    ? 'rounded-br-sm bg-[#01162B] text-white'
-                    : 'rounded-bl-sm border border-[#D2DBEB]/80 bg-white text-[#01162B]'
+                    ? 'rounded-br-xs bg-[#01162B] text-white'
+                    : 'rounded-bl-xs border border-[#D2DBEB]/80 bg-white text-[#01162B]'
                 }`}
               >
                 {!isUser && (
-                  <div className="mb-2 flex items-center gap-1.5 text-[10px] font-bold text-[#6A90B4]">
+                  <div className="mb-2 flex items-center gap-1.5 text-[10px] font-extrabold text-[#6A90B4]">
                     <Sparkles className="h-3 w-3 text-[#00385A]" />
                     LEGAL LENS ASSISTANT
                   </div>
                 )}
+
                 {renderFormattedMessage(msg.text)}
+
+                {/* Source Citation Badge */}
                 {!isUser && msg.source && (
                   <div className="mt-3 border-t border-[#D2DBEB]/60 pt-2 text-[10px]">
-                    <div className="flex items-center justify-between gap-2 text-[#00385A]">
-                      <span className="truncate font-semibold">{msg.source}</span>
+                    <div className="flex items-center justify-between gap-2 text-[#00385A] font-medium">
+                      <span className="truncate">Source: {msg.source}</span>
                       <button
                         onClick={() => copyCitation(msg.id, msg.text, msg.source)}
-                        className="inline-flex shrink-0 items-center gap-1 text-[#6A90B4] hover:text-[#01162B]"
+                        className="inline-flex shrink-0 items-center gap-1 text-[#6A90B4] hover:text-[#01162B] font-bold cursor-pointer"
                       >
                         {copiedId === msg.id ? (
                           <>
@@ -388,36 +347,57 @@ export default function FloatingChatbot({ currentDoc, initialQuestion, onClearIn
                         )}
                       </button>
                     </div>
-                    {msg.confidence && (
-                      <div className="mt-1 flex justify-between text-[#94A2BF]">
-                        <span>{msg.confidence}</span>
-                        <span>Page {msg.page || '1'} verified</span>
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
-              <span className="mt-1 px-1 text-[10px] text-[#94A2BF]">{msg.timestamp}</span>
+              <span className="mt-1 px-1 text-[10px] text-[#94A2BF] font-mono">{msg.timestamp}</span>
             </div>
           );
         })}
+
         {isTyping && (
-          <div className="flex w-fit items-center gap-2 rounded-2xl border border-[#D2DBEB] bg-white p-3 text-xs text-[#6A90B4]">
+          <div className="flex w-fit items-center gap-2 rounded-2xl border border-[#D2DBEB] bg-white p-3 text-xs font-semibold text-[#6A90B4]">
             <Sparkles className="h-4 w-4 animate-spin text-[#00385A]" />
-            Searching document context…
+            Searching document context...
           </div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input Form */}
-      <div className="shrink-0 border-t border-[#D2DBEB]/80 bg-white p-4">
+      {/* RECOMMENDED QUESTIONS DISPLAYED ABOVE CHAT INPUT */}
+      <div className="border-t border-b border-[#D2DBEB] bg-[#F0F4F8] px-4 py-3 shrink-0">
+        <p className="mb-2 text-[10px] font-extrabold uppercase tracking-wider text-[#6A90B4] flex items-center gap-1">
+          <Sparkles className="h-3 w-3 text-amber-500" />
+          Recommended Questions for {currentDoc?.name || 'Document'}
+        </p>
+
+        {suggestedQuestionsList.length > 0 ? (
+          <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+            {suggestedQuestionsList.map((chip, idx) => (
+              <button
+                key={`${idx}-${chip}`}
+                onClick={() => handleSendMessage(chip)}
+                className="shrink-0 rounded-xl border border-[#D2DBEB] bg-white px-3 py-1.5 text-xs font-bold text-[#00385A] transition-all hover:border-[#01162B] hover:bg-[#01162B] hover:text-white shadow-2xs cursor-pointer"
+              >
+                {chip}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-[#6A90B4] font-medium">
+            Recommended questions are ready for this agreement.
+          </p>
+        )}
+      </div>
+
+      {/* CHAT INPUT AREA */}
+      <div className="shrink-0 bg-white p-4">
         <form
           onSubmit={(event) => {
             event.preventDefault();
             handleSendMessage();
           }}
-          className="flex items-center gap-2 rounded-2xl border border-[#D2DBEB] bg-[#F0F4F8] p-1.5 focus-within:border-[#00385A] focus-within:ring-1 focus-within:ring-[#00385A]"
+          className="flex items-center gap-2 rounded-2xl border border-[#D2DBEB] bg-[#F0F4F8] p-1.5 focus-within:border-[#01162B] focus-within:ring-2 focus-within:ring-[#01162B]/20"
         >
           <input
             ref={inputRef}
@@ -425,12 +405,14 @@ export default function FloatingChatbot({ currentDoc, initialQuestion, onClearIn
             value={inputVal}
             onChange={(event) => setInputVal(event.target.value)}
             placeholder={isListening ? 'Listening...' : `Ask anything about ${currentDoc?.name || 'this document'}...`}
-            className="min-w-0 flex-1 bg-transparent px-2 py-2 text-sm text-[#01162B] placeholder-[#94A2BF] outline-none"
+            className="min-w-0 flex-1 bg-transparent px-3 py-2 text-xs sm:text-sm text-[#01162B] font-medium placeholder-[#94A2BF] outline-none"
           />
+
+          {/* Voice Input Button 🎤 */}
           <button
             type="button"
             onClick={toggleVoice}
-            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-all ${
+            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-all cursor-pointer ${
               isListening
                 ? 'animate-pulse bg-red-500 text-white shadow-md'
                 : 'text-[#6A90B4] hover:bg-white hover:text-[#01162B]'
@@ -439,18 +421,23 @@ export default function FloatingChatbot({ currentDoc, initialQuestion, onClearIn
           >
             <Mic className="h-4 w-4" />
           </button>
+
+          {/* Send Button ➤ */}
           <button
             type="submit"
             disabled={!inputVal.trim() || isTyping}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#01162B] text-white transition-colors hover:bg-[#00385A] disabled:opacity-40"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#01162B] text-white transition-colors hover:bg-[#00385A] disabled:opacity-40 cursor-pointer"
             aria-label="Send message"
           >
             <Send className="h-4 w-4" />
           </button>
         </form>
 
-        <p className="mt-2 px-1 text-[10px] text-[#94A2BF]">Informational analysis only · Not formal legal advice</p>
+        <p className="mt-2 px-1 text-[10px] text-[#94A2BF] font-medium">
+          Legal Lens AI Assistant · Grounded Document Analysis
+        </p>
       </div>
+
     </section>
   );
 }

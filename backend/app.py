@@ -219,6 +219,44 @@ def login():
         return jsonify({"error": "Server error during login"}), 500
 
 
+@app.route("/api/auth/google", methods=["POST"])
+def google_auth():
+    try:
+        data = request.get_json() or {}
+        email = data.get("email", "").strip().lower()
+        name = data.get("name", "").strip() or "Google User"
+
+        if not email or "@" not in email:
+            return jsonify({"error": "Valid email address is required from Google response"}), 400
+
+        user_record = get_user_by_email(email)
+        if not user_record:
+            random_pwd = hash_password(f"GOOGLE_OAUTH_{uuid.uuid4().hex}")
+            user_record = create_user(name, email, random_pwd)
+            if not user_record:
+                return jsonify({"error": "Failed to create account for Google user"}), 500
+            log_activity(user_record["id"], "USER_REGISTER_GOOGLE", f"Registered account via Google OAuth for {email}")
+        else:
+            log_activity(user_record["id"], "USER_LOGIN_GOOGLE", f"User logged in via Google OAuth with email {email}")
+
+        user_role = user_record.get("role", "user")
+        token = generate_token(user_record["id"], user_record["email"], user_record["name"], user_role)
+
+        return jsonify({
+            "success": True,
+            "token": token,
+            "user": {
+                "id": user_record["id"],
+                "name": user_record["name"],
+                "email": user_record["email"],
+                "role": user_role
+            }
+        })
+    except Exception as e:
+        print("❌ Google Auth Error:", str(e))
+        return jsonify({"error": "Server error during Google authentication"}), 500
+
+
 @app.route("/api/auth/me", methods=["GET"])
 @login_required
 def get_current_user_profile():

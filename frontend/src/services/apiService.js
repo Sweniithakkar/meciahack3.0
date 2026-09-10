@@ -94,6 +94,28 @@ class LegalLensAPIService {
     throw new Error('Authentication failed.');
   }
 
+  async loginWithGoogle(email, name = 'Google User', googleToken = '') {
+    const response = await fetch(`${RAG_CONFIG.API_BASE_URL}/auth/google`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, name, googleToken }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Google authentication failed.');
+    }
+
+    if (data.token && data.user) {
+      localStorage.setItem('legalLensAuthToken', data.token);
+      localStorage.setItem('legalLensCurrentUser', JSON.stringify(data.user));
+      return data.user;
+    }
+
+    throw new Error('Google Sign-In failed.');
+  }
+
   async registerUser(name, email, password) {
     const response = await fetch(`${RAG_CONFIG.API_BASE_URL}/auth/register`, {
       method: 'POST',

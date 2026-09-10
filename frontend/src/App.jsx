@@ -45,6 +45,7 @@ export default function App() {
   const [processingFileName, setProcessingFileName] = useState('');
 
   const [chatInitialQuestion, setChatInitialQuestion] = useState('');
+  const [isChatOpen, setIsChatOpen] = useState(false);
 
   // Modals
   const [selectedClause, setSelectedClause] = useState(null);
@@ -329,11 +330,10 @@ export default function App() {
 
   // Direct trigger to open chatbot with a specific question
   const handleOpenChatWithQuestion = (question) => {
-    setChatInitialQuestion(question);
-    setTimeout(() => {
-      const el = document.getElementById('legal-lens-assistant');
-      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }, 50);
+    if (question && typeof question === 'string') {
+      setChatInitialQuestion(question);
+    }
+    setIsChatOpen(true);
   };
 
   // Reset state to home
@@ -371,7 +371,8 @@ export default function App() {
         hasUploadedDoc={hasUploadedDoc}
         documentsList={documentsList}
         onSwitchDocument={handleSelectDocument}
-        onOpenChat={() => document.getElementById('legal-lens-assistant')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+        onOpenChat={() => setIsChatOpen((prev) => !prev)}
+        isChatOpen={isChatOpen}
         onReset={handleReset}
         currentUser={currentUser}
         onLogout={handleLogout}
@@ -392,6 +393,11 @@ export default function App() {
           <HeroUpload
             onUpload={handleFileUpload}
             onSelectSample={handleSelectSample}
+            currentUser={currentUser}
+            documentsList={documentsList}
+            onSelectDocument={handleSelectDocument}
+            onDownloadReport={(doc) => setReportModalDoc(doc || currentDoc)}
+            onOpenChat={handleOpenChatWithQuestion}
           />
         ) : activeNav === 'my-documents' ? (
           /* View 2: My Documents Library */
@@ -410,29 +416,30 @@ export default function App() {
             onNavigateHome={() => setActiveNav('home')}
           />
         ) : (
-          /* View 3 & 4: Continuous document analysis with an integrated assistant panel */
+          /* View 4: Full-Width Document Analysis View */
           <div id="document-analysis-root" className="w-full px-4 sm:px-6 lg:px-8 xl:px-10 py-6">
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start w-full">
-
-              <section className="lg:col-span-8 xl:col-span-8 bg-white rounded-3xl shadow-xl border border-[#D2DBEB]/80 overflow-hidden flex flex-col md:flex-row min-h-[850px] min-w-0">
-                {/* Document Sidebar (Flush left navigation drawer) */}
+            <div className="w-full">
+              <section className="w-full bg-white rounded-3xl shadow-xl border border-[#D2DBEB]/80 overflow-hidden flex flex-col md:flex-row min-h-[850px] min-w-0">
+                {/* Document Sidebar */}
                 <DocumentSidebar
                   currentDoc={currentDoc}
                   documentsList={documentsList}
                   onSelectDocument={handleSelectDocument}
                   onNewDocument={() => setActiveNav('home')}
                   onReset={handleReset}
+                  onOpenChat={handleOpenChatWithQuestion}
                 />
 
-                {/* Main Analysis Continuous Content Container */}
+                {/* Main Analysis Continuous Content Container (Full Available Width) */}
                 <div className="flex-1 p-6 lg:p-8 space-y-8 overflow-x-hidden min-w-0">
                 
                 {/* 1. Document Header */}
                 <DocumentHeader
                   document={currentDoc}
                   onDownloadReport={() => setReportModalDoc(currentDoc)}
-                  onOpenChat={() => document.getElementById('legal-lens-assistant')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+                  onOpenChat={handleOpenChatWithQuestion}
                   onReanalyze={handleReanalyzeDocument}
+                  onBackToDocuments={() => handleNavigate('my-documents')}
                 />
 
                 {/* 2. Plain-Language Summary & Highlights */}
@@ -441,7 +448,7 @@ export default function App() {
                   onOpenChat={handleOpenChatWithQuestion}
                 />
 
-                {/* 3. Important Clauses (with mandatory #01162B hover effect) */}
+                {/* 3. Important Clauses */}
                 <ImportantClauses
                   clauses={currentDoc?.clauses}
                   onSelectClause={(clause) => setSelectedClause(clause)}
@@ -468,20 +475,34 @@ export default function App() {
 
                 </div>
               </section>
-
-              <aside id="legal-lens-assistant" className="lg:col-span-4 xl:col-span-4 lg:sticky lg:top-24 lg:h-[calc(100vh-7rem)] min-h-[620px]">
-                <FloatingChatbot
-                  currentDoc={currentDoc}
-                  initialQuestion={chatInitialQuestion}
-                  onClearInitialQuestion={() => setChatInitialQuestion('')}
-                />
-              </aside>
             </div>
           </div>
         )}
 
-
       </main>
+
+      {/* User-Controlled Slide-in Right Chatbot Drawer Overlay */}
+      {isChatOpen && (
+        <div className="fixed inset-0 z-50 overflow-hidden animate-in fade-in duration-200">
+          {/* Subtle Backdrop */}
+          <div 
+            className="fixed inset-0 bg-black/40 backdrop-blur-xs transition-opacity"
+            onClick={() => setIsChatOpen(false)}
+          />
+
+          {/* Slide-in Right Panel / Drawer (380px - 450px wide desktop, full screen mobile) */}
+          <div className="fixed inset-y-0 right-0 max-w-full flex pl-4 sm:pl-10">
+            <div className="w-screen max-w-full sm:max-w-md lg:w-[440px] bg-white shadow-2xl animate-in slide-in-from-right duration-300 ease-in-out border-l border-[#D2DBEB]/80">
+              <FloatingChatbot
+                currentDoc={currentDoc}
+                initialQuestion={chatInitialQuestion}
+                onClearInitialQuestion={() => setChatInitialQuestion('')}
+                onClose={() => setIsChatOpen(false)}
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Clause Detail Inspector Modal */}
       {selectedClause && (
